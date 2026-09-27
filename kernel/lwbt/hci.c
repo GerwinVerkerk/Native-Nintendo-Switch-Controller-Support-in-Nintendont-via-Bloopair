@@ -1799,8 +1799,6 @@ void hci_event_handler(struct pbuf *p)
 			hci_user_confirmation_request_reply(bdaddr);
 			break;
 		case HCI_SIMPLE_PAIRING_COMPLETE:
-			dbgprintf("[SWTRACE] SSP complete_status=%u\r\n",
-				((u8_t*)p->payload)[0]);
 			if(((u8_t*)p->payload)[0] == HCI_SUCCESS)
 				BTDiagnosticPairingPhase(BT_DIAG_SSP_COMPLETE,
 					(struct bd_addr*)(((u8_t*)p->payload) + 1));

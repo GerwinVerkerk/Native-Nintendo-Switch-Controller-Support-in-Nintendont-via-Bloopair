@@ -11,12 +11,17 @@ USB adapter.
 - Retains Nintendont's normal vWii `CONF_GetPadDevices` registrations.
 - Listens for stored-key addresses that are absent from vWii SYSCONF and probes
   those devices as Switch Pro controllers.
-- Sends Switch subcommands for device information, full `0x30` input reports
-  and the player LED.
+- Runs a paced Switch initialization state machine outside the receive
+  callback: wait 300 ms, request device information, wait for its positive ACK,
+  wait at least 60 ms, then set the player LED.
+- Retries each initialization command every 100 ms, up to ten sends, and
+  initially keeps the controller's compatibility `0x3f` input mode instead of
+  forcing full `0x30` mode.
 - Parses both full `0x30`/`0x21` reports and fallback `0x3f` basic reports.
 - Maps A/B/X/Y, D-pad, both sticks, L/R/ZL/ZR, Plus and Home through
   Nintendont's existing GameCube controller path.
-- Reopens the Bluetooth listeners after a Switch Pro disconnect.
+- Reopens the Bluetooth listeners after a Switch Pro disconnect and answers
+  later link-key requests from the persisted controller key list.
 
 Rumble is intentionally not part of this first playable build. Capture and the
 two stick-click buttons have no GameCube equivalents and are ignored. Minus is
@@ -93,7 +98,7 @@ player LED while the diagnostic is active.
 | LEDs 1+4 solid | Authentication requested | The Bluetooth controller accepted the HCI Authentication Requested command, but Authentication Complete has not succeeded yet. |
 | LEDs 1+3 and 2+4 alternate | 5. Authenticated | HCI Authentication Complete succeeded for the target controller. |
 | All four LEDs blink slowly | 6. Encrypted | HCI Encryption Change reported that link encryption is enabled. Only then does this build start HID protocol initialization. |
-| All four LEDs blink at medium speed | 7. Protocol | The controller acknowledged HID Set Protocol (Report); Nintendont then requested full `0x30` reports. |
+| All four LEDs blink at medium speed | 7. Protocol | The controller acknowledged HID Set Protocol (Report); Nintendont then waits 300 ms before starting the paced compatibility-mode initialization. |
 | All four LEDs blink quickly | 8. Input | At least three continuous Switch Pro `0x30` or `0x3f` input reports were parsed. A `0x21` subcommand response no longer counts as streaming input. |
 | LEDs 1+4 and 2+3 alternate | Authentication failed | HCI Authentication Complete returned a failure status. This is an error pattern, not a completed phase. |
 | LEDs 1+2 and 3+4 alternate | Encryption failed | HCI Encryption Change failed or reported encryption disabled. This is an error pattern, not a completed phase. |
@@ -119,19 +124,14 @@ Installation and launch:
 Rollback: restore the backed-up `boot.dol`. A successful pairing may replace
 the Switch Pro link key, in which case Bloopair may need to pair it again.
 
-### SD event trace
+### Logging safety
 
-Enable **Log** in Nintendont's settings before launching the game. The in-game
-kernel then appends a bounded Bluetooth trace to `sd:/ndebug.log`. Trace lines
-use the `[SWTRACE]` prefix and record security status codes, HID channel state,
-Set Protocol, Switch subcommand TX/ACK state, and the first 24 HID reports.
-Bluetooth addresses and link-key bytes are deliberately not logged.
-
-For one diagnostic run, start the game directly from Nintendont, hold the
-controller's small SYNC button for several seconds during loading, wait 30
-seconds, then exit and retrieve `sd:/ndebug.log`. The trace distinguishes
-`0x21` subcommand replies from continuous `0x30` and fallback `0x3f` input, so
-LED speed is no longer the primary diagnostic signal.
+Keep Nintendont's **Log** setting **Off** for controller tests. The general
+Nintendont logger synchronously flushes each line to the active FAT volume.
+Hardware testing of an earlier high-frequency trace build caused Double Dash
+to show its generic disc error during startup; restoring the stable build and
+turning Log off restored normal startup. The paced build removes that packet
+trace and does not require file logging.
 
 Record pass/fail and any LED behavior for every step:
 
@@ -187,21 +187,24 @@ Observed on Wii U hardware:
   Set Protocol acknowledgement and at least one Switch report. Its fast LED
   diagnostic was a false positive for input because a `0x21` subcommand reply
   was accepted by the shared report parser. The Switch Pro player LEDs still
-  swept and Double Dash received no input. The trace build separates `0x21`,
-  `0x30`, and `0x3f`, and only reports streaming input after three real
-  `0x30`/`0x3f` reports.
+  swept and Double Dash received no input.
+- Trace build `f33d5a7` with Nintendont Log enabled caused Double Dash's generic
+  disc error and produced no usable trace file. It was rolled back. The paced
+  build removes all `[SWTRACE]` packet logging and must be tested with Log off.
 
-The next architecture step gates the Switch Pro connection callback behind
-successful authentication and encryption. Existing Wii Remote and Wii U Pro
-connections retain their original behavior. This prevents Switch protocol
-commands from being sent merely because both L2CAP channels exist; the
-application sees the controller only after the secured HID transport is ready.
-This security gate is compile-tested but not yet hardware-validated.
+The current implementation keeps the proven authentication/encryption gate and
+adds the missing initialization sequence found by comparison with Bloopair,
+Linux `hid-nintendo`, and BlueRetro. It no longer sends commands directly from
+the receive callback, starts with Device Info `0x02`, enforces pacing/retries,
+sets the player LED only after the matching ACK, and requires three genuine
+streaming reports before publishing a GameCube controller. Command reply
+`0x21` can no longer claim a player slot. The full-report button bit layout was
+also corrected to match the published Switch protocol.
 
 Still requires Wii U hardware:
 
-- Visibility of the Bloopair-created stored link key in vWii.
-- Bluetooth connection and Switch protocol initialization.
+- Paced Device Info and player-LED initialization on an original controller.
+- Continuous compatibility-mode `0x3f` reports and GameCube input.
 - Real stick calibration/range behavior.
 - Reconnection, Wii-controller regression and return-to-menu behavior.
 

@@ -20,9 +20,9 @@ static void test_full_report(void)
 	memset(report, 0, sizeof(report));
 	SwitchProReset(&state);
 	report[0] = SWITCH_PRO_REPORT_FULL;
-	report[3] = 0x10 | 0x20 | 0x40 | 0x80 | 0x02 | 0x01;
-	report[4] = 0x40 | 0x80 | 0x08;
-	report[5] = 0x02 | 0x01 | 0x10 | 0x20 | 0x40 | 0x80;
+	report[3] = 0x08 | 0x04 | 0x02 | 0x01 | 0x40 | 0x80;
+	report[4] = 0x02 | 0x01 | 0x10;
+	report[5] = 0x40 | 0x80 | 0x08 | 0x04 | 0x02 | 0x01;
 	pack_axis(&report[6], 0xFFF, 0x000);
 	pack_axis(&report[9], 0x000, 0xFFF);
 
@@ -72,6 +72,90 @@ static void test_basic_report_and_first_packet_drop(void)
 	assert(input.buttons & SWITCH_PRO_BTN_RIGHT);
 }
 
+static void test_full_button_bits_individually(void)
+{
+	struct ButtonCase {
+		u8 offset;
+		u8 bit;
+		u32 expected;
+	};
+	static const struct ButtonCase cases[] = {
+		{3, 0x08, SWITCH_PRO_BTN_A},
+		{3, 0x04, SWITCH_PRO_BTN_B},
+		{3, 0x02, SWITCH_PRO_BTN_X},
+		{3, 0x01, SWITCH_PRO_BTN_Y},
+		{3, 0x40, SWITCH_PRO_BTN_R},
+		{3, 0x80, SWITCH_PRO_BTN_ZR},
+		{4, 0x02, SWITCH_PRO_BTN_PLUS},
+		{4, 0x01, SWITCH_PRO_BTN_MINUS},
+		{4, 0x10, SWITCH_PRO_BTN_HOME},
+		{5, 0x40, SWITCH_PRO_BTN_L},
+		{5, 0x80, SWITCH_PRO_BTN_ZL},
+		{5, 0x08, SWITCH_PRO_BTN_LEFT},
+		{5, 0x04, SWITCH_PRO_BTN_RIGHT},
+		{5, 0x02, SWITCH_PRO_BTN_UP},
+		{5, 0x01, SWITCH_PRO_BTN_DOWN}
+	};
+	struct SwitchProState state;
+	struct SwitchProInput input;
+	u8 report[13];
+	u32 i;
+
+	for(i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+	{
+		memset(report, 0, sizeof(report));
+		SwitchProReset(&state);
+		report[0] = SWITCH_PRO_REPORT_FULL;
+		pack_axis(&report[6], 0x800, 0x800);
+		pack_axis(&report[9], 0x800, 0x800);
+		report[cases[i].offset] = cases[i].bit;
+		assert(SwitchProParseReport(&state, report, sizeof(report),
+			&input) == 1);
+		assert(input.buttons == cases[i].expected);
+	}
+}
+
+static void test_basic_button_bits_individually(void)
+{
+	struct ButtonCase {
+		u8 offset;
+		u8 bit;
+		u32 expected;
+	};
+	static const struct ButtonCase cases[] = {
+		{1, 0x40, SWITCH_PRO_BTN_A},
+		{1, 0x80, SWITCH_PRO_BTN_B},
+		{1, 0x10, SWITCH_PRO_BTN_X},
+		{1, 0x20, SWITCH_PRO_BTN_Y},
+		{1, 0x08, SWITCH_PRO_BTN_L},
+		{1, 0x04, SWITCH_PRO_BTN_R},
+		{1, 0x02, SWITCH_PRO_BTN_ZL},
+		{1, 0x01, SWITCH_PRO_BTN_ZR},
+		{2, 0x40, SWITCH_PRO_BTN_PLUS},
+		{2, 0x80, SWITCH_PRO_BTN_MINUS},
+		{2, 0x08, SWITCH_PRO_BTN_HOME}
+	};
+	struct SwitchProState state;
+	struct SwitchProInput input;
+	u8 report[12];
+	u32 i;
+
+	for(i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+	{
+		memset(report, 0, sizeof(report));
+		SwitchProReset(&state);
+		report[0] = SWITCH_PRO_REPORT_BASIC;
+		report[3] = 8;
+		report[4] = report[6] = report[8] = report[10] = 0x80;
+		report[cases[i].offset] = cases[i].bit;
+		assert(SwitchProParseReport(&state, report, sizeof(report),
+			&input) == 0);
+		assert(SwitchProParseReport(&state, report, sizeof(report),
+			&input) == 1);
+		assert(input.buttons == cases[i].expected);
+	}
+}
+
 static void test_subcommand(void)
 {
 	struct SwitchProState state;
@@ -118,12 +202,103 @@ static void test_diagnostic_leds(void)
 	assert(SwitchProDiagnosticLED(11, 1) == 0x90);
 }
 
+static void test_init_happy_path(void)
+{
+	struct SwitchProState state;
+	u8 action;
+
+	SwitchProReset(&state);
+	SwitchProInitStart(&state);
+	assert(state.init_state == SWITCH_PRO_INIT_INITIAL_DELAY);
+	assert(SwitchProInitDelayMs(&state) == 300);
+	action = SwitchProInitPoll(&state);
+	assert(action == SWITCH_PRO_INIT_ACTION_DEVICE_INFO);
+	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
+	assert(state.init_retries == 1);
+	assert(SwitchProInitDelayMs(&state) == 100);
+
+	/* An unrelated acknowledgement must not advance the state. */
+	assert(SwitchProInitHandleAck(&state, 0x80,
+		SWITCH_PRO_SUBCMD_PLAYER_LED) == SWITCH_PRO_ACK_IGNORED);
+	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
+
+	assert(SwitchProInitHandleAck(&state, 0x82,
+		SWITCH_PRO_SUBCMD_DEVICE_INFO) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(state.init_state == SWITCH_PRO_INIT_DEVICE_INFO_ACKED);
+	assert(SwitchProInitDelayMs(&state) == 60);
+	action = SwitchProInitPoll(&state);
+	assert(action == SWITCH_PRO_INIT_ACTION_PLAYER_LED);
+	assert(state.init_state == SWITCH_PRO_INIT_WAIT_PLAYER_LED);
+	assert(SwitchProInitHandleAck(&state, 0x80,
+		SWITCH_PRO_SUBCMD_PLAYER_LED) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(state.init_state == SWITCH_PRO_INIT_READY);
+	assert(SwitchProInitDelayMs(&state) == 0);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_NONE);
+}
+
+static void test_init_retry_timeout_and_negative_ack(void)
+{
+	struct SwitchProState state;
+	u8 i;
+
+	SwitchProReset(&state);
+	SwitchProInitStart(&state);
+	assert(SwitchProInitPoll(&state) ==
+		SWITCH_PRO_INIT_ACTION_DEVICE_INFO);
+	assert(SwitchProInitHandleAck(&state, 0x00,
+		SWITCH_PRO_SUBCMD_DEVICE_INFO) == SWITCH_PRO_ACK_NEGATIVE);
+	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
+
+	for(i = 1; i < SWITCH_PRO_INIT_RETRY_MAX; i++)
+		assert(SwitchProInitPoll(&state) ==
+			SWITCH_PRO_INIT_ACTION_DEVICE_INFO);
+	assert(state.init_retries == SWITCH_PRO_INIT_RETRY_MAX);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_FAILED);
+	assert(state.init_state == SWITCH_PRO_INIT_FAILED);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_NONE);
+}
+
+static void test_stream_readiness_excludes_command_replies(void)
+{
+	struct SwitchProState state;
+
+	SwitchProReset(&state);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_COMMAND, 1) == 0);
+	assert(state.consecutive_stream_reports == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 1) == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_COMMAND, 1) == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 0) == 0);
+	assert(state.consecutive_stream_reports == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 1) == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 1) == 0);
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 1) == 1);
+	assert(state.consecutive_stream_reports ==
+		SWITCH_PRO_STREAM_READY_REPORTS);
+	/* Once streaming is proven, one malformed packet must not unassign the pad. */
+	assert(SwitchProTrackStreamReport(&state,
+		SWITCH_PRO_REPORT_BASIC, 0) == 1);
+	assert(state.consecutive_stream_reports ==
+		SWITCH_PRO_STREAM_READY_REPORTS);
+}
+
 int main(void)
 {
 	test_full_report();
 	test_basic_report_and_first_packet_drop();
+	test_full_button_bits_individually();
+	test_basic_button_bits_individually();
 	test_subcommand();
 	test_diagnostic_leds();
+	test_init_happy_path();
+	test_init_retry_timeout_and_negative_ack();
+	test_stream_readiness_excludes_command_replies();
 	puts("switch_pro tests: ok");
 	return 0;
 }

@@ -47,6 +47,7 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr);
 void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr);
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr);
+void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr);
 
 struct BTPadStat {
 	u32 controller;
@@ -64,6 +65,7 @@ struct BTPadStat {
 	struct bte_pcb *sock;
 	struct bd_addr bdaddr;
 	struct SwitchProState switch_state;
+	u32 switch_init_timer;
 } ALIGNED(32);
 
 struct BTPadCont {

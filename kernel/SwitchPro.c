@@ -54,21 +54,21 @@ static void parse_full(const u8 *report, struct SwitchProInput *input)
 	input->right_x = clamp_axis(((s32)switch_axis_x(&report[9]) - 0x800) >> 4);
 	input->right_y = clamp_axis(-(((s32)switch_axis_y(&report[9]) - 0x800) >> 4));
 
-	if(right & 0x10) buttons |= SWITCH_PRO_BTN_A;
-	if(right & 0x20) buttons |= SWITCH_PRO_BTN_B;
-	if(right & 0x40) buttons |= SWITCH_PRO_BTN_X;
-	if(right & 0x80) buttons |= SWITCH_PRO_BTN_Y;
-	if(right & 0x02) buttons |= SWITCH_PRO_BTN_R;
-	if(right & 0x01) buttons |= SWITCH_PRO_BTN_ZR;
-	if(shared & 0x40) buttons |= SWITCH_PRO_BTN_PLUS;
-	if(shared & 0x80) buttons |= SWITCH_PRO_BTN_MINUS;
-	if(shared & 0x08) buttons |= SWITCH_PRO_BTN_HOME;
-	if(left & 0x02) buttons |= SWITCH_PRO_BTN_L;
-	if(left & 0x01) buttons |= SWITCH_PRO_BTN_ZL;
-	if(left & 0x10) buttons |= SWITCH_PRO_BTN_LEFT;
-	if(left & 0x20) buttons |= SWITCH_PRO_BTN_RIGHT;
-	if(left & 0x40) buttons |= SWITCH_PRO_BTN_UP;
-	if(left & 0x80) buttons |= SWITCH_PRO_BTN_DOWN;
+	if(right & 0x08) buttons |= SWITCH_PRO_BTN_A;
+	if(right & 0x04) buttons |= SWITCH_PRO_BTN_B;
+	if(right & 0x02) buttons |= SWITCH_PRO_BTN_X;
+	if(right & 0x01) buttons |= SWITCH_PRO_BTN_Y;
+	if(right & 0x40) buttons |= SWITCH_PRO_BTN_R;
+	if(right & 0x80) buttons |= SWITCH_PRO_BTN_ZR;
+	if(shared & 0x02) buttons |= SWITCH_PRO_BTN_PLUS;
+	if(shared & 0x01) buttons |= SWITCH_PRO_BTN_MINUS;
+	if(shared & 0x10) buttons |= SWITCH_PRO_BTN_HOME;
+	if(left & 0x40) buttons |= SWITCH_PRO_BTN_L;
+	if(left & 0x80) buttons |= SWITCH_PRO_BTN_ZL;
+	if(left & 0x08) buttons |= SWITCH_PRO_BTN_LEFT;
+	if(left & 0x04) buttons |= SWITCH_PRO_BTN_RIGHT;
+	if(left & 0x02) buttons |= SWITCH_PRO_BTN_UP;
+	if(left & 0x01) buttons |= SWITCH_PRO_BTN_DOWN;
 	input->buttons = buttons;
 }
 
@@ -161,6 +161,128 @@ u16 SwitchProBuildSubcommand(struct SwitchProState *state, u8 *report,
 	if(data_len && data != 0)
 		copy_bytes(&report[11], data, data_len);
 	return size;
+}
+
+void SwitchProInitStart(struct SwitchProState *state)
+{
+	if(state == 0)
+		return;
+	state->init_state = SWITCH_PRO_INIT_INITIAL_DELAY;
+	state->init_retries = 0;
+	state->pending_subcommand = 0;
+}
+
+u16 SwitchProInitDelayMs(const struct SwitchProState *state)
+{
+	if(state == 0)
+		return 0;
+	switch(state->init_state)
+	{
+		case SWITCH_PRO_INIT_INITIAL_DELAY:
+			return 300;
+		case SWITCH_PRO_INIT_DEVICE_INFO_ACKED:
+			return 60;
+		case SWITCH_PRO_INIT_WAIT_DEVICE_INFO:
+		case SWITCH_PRO_INIT_WAIT_PLAYER_LED:
+			return 100;
+		default:
+			return 0;
+	}
+}
+
+u8 SwitchProInitPoll(struct SwitchProState *state)
+{
+	u8 command;
+	if(state == 0)
+		return SWITCH_PRO_INIT_ACTION_NONE;
+
+	switch(state->init_state)
+	{
+		case SWITCH_PRO_INIT_INITIAL_DELAY:
+			command = SWITCH_PRO_SUBCMD_DEVICE_INFO;
+			state->init_state = SWITCH_PRO_INIT_WAIT_DEVICE_INFO;
+			state->init_retries = 1;
+			break;
+		case SWITCH_PRO_INIT_DEVICE_INFO_ACKED:
+			command = SWITCH_PRO_SUBCMD_PLAYER_LED;
+			state->init_state = SWITCH_PRO_INIT_WAIT_PLAYER_LED;
+			state->init_retries = 1;
+			break;
+		case SWITCH_PRO_INIT_WAIT_DEVICE_INFO:
+			command = SWITCH_PRO_SUBCMD_DEVICE_INFO;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+			{
+				state->init_state = SWITCH_PRO_INIT_FAILED;
+				state->pending_subcommand = 0;
+				return SWITCH_PRO_INIT_ACTION_FAILED;
+			}
+			state->init_retries++;
+			break;
+		case SWITCH_PRO_INIT_WAIT_PLAYER_LED:
+			command = SWITCH_PRO_SUBCMD_PLAYER_LED;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+			{
+				state->init_state = SWITCH_PRO_INIT_FAILED;
+				state->pending_subcommand = 0;
+				return SWITCH_PRO_INIT_ACTION_FAILED;
+			}
+			state->init_retries++;
+			break;
+		default:
+			return SWITCH_PRO_INIT_ACTION_NONE;
+	}
+
+	state->pending_subcommand = command;
+	if(command == SWITCH_PRO_SUBCMD_DEVICE_INFO)
+		return SWITCH_PRO_INIT_ACTION_DEVICE_INFO;
+	return SWITCH_PRO_INIT_ACTION_PLAYER_LED;
+}
+
+u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command)
+{
+	if(state == 0 || command != state->pending_subcommand)
+		return SWITCH_PRO_ACK_IGNORED;
+	if((ack & 0x80) == 0)
+		return SWITCH_PRO_ACK_NEGATIVE;
+
+	if(command == SWITCH_PRO_SUBCMD_DEVICE_INFO &&
+		state->init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO)
+	{
+		state->init_state = SWITCH_PRO_INIT_DEVICE_INFO_ACKED;
+		state->init_retries = 0;
+		state->pending_subcommand = 0;
+		return SWITCH_PRO_ACK_ACCEPTED;
+	}
+	if(command == SWITCH_PRO_SUBCMD_PLAYER_LED &&
+		state->init_state == SWITCH_PRO_INIT_WAIT_PLAYER_LED)
+	{
+		state->init_state = SWITCH_PRO_INIT_READY;
+		state->init_retries = 0;
+		state->pending_subcommand = 0;
+		return SWITCH_PRO_ACK_ACCEPTED;
+	}
+	return SWITCH_PRO_ACK_IGNORED;
+}
+
+u8 SwitchProTrackStreamReport(struct SwitchProState *state, u8 report_id,
+	u8 parsed)
+{
+	if(state == 0)
+		return 0;
+	if(report_id != SWITCH_PRO_REPORT_FULL &&
+		report_id != SWITCH_PRO_REPORT_BASIC)
+		return state->consecutive_stream_reports >=
+			SWITCH_PRO_STREAM_READY_REPORTS;
+	if(state->consecutive_stream_reports >= SWITCH_PRO_STREAM_READY_REPORTS)
+		return 1;
+	if(!parsed)
+	{
+		state->consecutive_stream_reports = 0;
+		return 0;
+	}
+	if(state->consecutive_stream_reports < SWITCH_PRO_STREAM_READY_REPORTS)
+		state->consecutive_stream_reports++;
+	return state->consecutive_stream_reports >= SWITCH_PRO_STREAM_READY_REPORTS;
 }
 
 u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on)

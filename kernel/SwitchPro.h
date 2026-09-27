@@ -27,6 +27,32 @@ typedef int32_t s32;
 #define SWITCH_PRO_SUBCMD_REPORT_MODE 0x03
 #define SWITCH_PRO_SUBCMD_PLAYER_LED  0x30
 
+#define SWITCH_PRO_INIT_RETRY_MAX 10
+#define SWITCH_PRO_STREAM_READY_REPORTS 3
+
+enum SwitchProInitState {
+	SWITCH_PRO_INIT_IDLE = 0,
+	SWITCH_PRO_INIT_INITIAL_DELAY,
+	SWITCH_PRO_INIT_WAIT_DEVICE_INFO,
+	SWITCH_PRO_INIT_DEVICE_INFO_ACKED,
+	SWITCH_PRO_INIT_WAIT_PLAYER_LED,
+	SWITCH_PRO_INIT_READY,
+	SWITCH_PRO_INIT_FAILED
+};
+
+enum SwitchProInitAction {
+	SWITCH_PRO_INIT_ACTION_NONE = 0,
+	SWITCH_PRO_INIT_ACTION_DEVICE_INFO,
+	SWITCH_PRO_INIT_ACTION_PLAYER_LED,
+	SWITCH_PRO_INIT_ACTION_FAILED
+};
+
+enum SwitchProAckResult {
+	SWITCH_PRO_ACK_IGNORED = 0,
+	SWITCH_PRO_ACK_ACCEPTED,
+	SWITCH_PRO_ACK_NEGATIVE
+};
+
 #define SWITCH_PRO_BTN_UP       0x0001
 #define SWITCH_PRO_BTN_LEFT     0x0002
 #define SWITCH_PRO_BTN_ZR       0x0004
@@ -46,6 +72,10 @@ typedef int32_t s32;
 struct SwitchProState {
 	u8 drop_first_basic_report;
 	u8 report_counter;
+	u8 init_state;
+	u8 init_retries;
+	u8 pending_subcommand;
+	u8 consecutive_stream_reports;
 };
 
 struct SwitchProInput {
@@ -61,6 +91,12 @@ s32 SwitchProParseReport(struct SwitchProState *state, const u8 *report,
 	u16 len, struct SwitchProInput *input);
 u16 SwitchProBuildSubcommand(struct SwitchProState *state, u8 *report,
 	u16 capacity, u8 command, const u8 *data, u8 data_len);
+void SwitchProInitStart(struct SwitchProState *state);
+u16 SwitchProInitDelayMs(const struct SwitchProState *state);
+u8 SwitchProInitPoll(struct SwitchProState *state);
+u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command);
+u8 SwitchProTrackStreamReport(struct SwitchProState *state, u8 report_id,
+	u8 parsed);
 u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on);
 
 #endif

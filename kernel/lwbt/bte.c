@@ -10,8 +10,6 @@
 #include "physbusif.h"
 #include "../BT.h"
 
-extern int dbgprintf(const char *fmt, ...);
-
 #define STACKSIZE						32768
 #define MQ_BOX_SIZE						256
 
@@ -64,7 +62,6 @@ struct ctrl_req_t
 };
 
 static struct bt_state btstate;
-static u32 bte_switch_trace_rx = 0;
 static u8_t bte_patch0[184] = {
 	0x70,0x99,0x08,0x00,0x88,0x43,0xd1,0x07,0x09,0x0c,0x08,0x43,0xa0,0x62,0x19,0x23,
 	0xdb,0x01,0x33,0x80,0x7c,0xf7,0x88,0xf8,0x28,0x76,0x80,0xf7,0x17,0xff,0x43,0x78,
@@ -329,12 +326,6 @@ static err_t bte_process_input(void *arg,struct l2cap_pcb *pcb,struct pbuf *p,er
 	hdr = *buf++;
 	type = (hdr&HIDP_HDR_TRANS_MASK);
 	param = (hdr&HIDP_HDR_PARAM_MASK);
-	if(bte->require_security && bte_switch_trace_rx < 24)
-	{
-		dbgprintf("[SWTRACE] HID_RX n=%u hdr=%02x type=%02x param=%02x len=%u\r\n",
-			bte_switch_trace_rx + 1, hdr, type, param, len);
-		bte_switch_trace_rx++;
-	}
 	switch(type) {
 		case HIDP_TRANS_HANDSHAKE:
 			bte_process_handshake(bte,param,buf,len);
@@ -499,11 +490,6 @@ s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*con
 	pcb->conn_notified = 0;
 	pcb->conn_cfm = conn_cfm;
 	pcb->state = (u32)STATE_CONNECTING;
-	if(pcb->require_security)
-	{
-		bte_switch_trace_rx = 0;
-		dbgprintf("[SWTRACE] BTE register_switch=1 security_required=1\r\n");
-	}
 
 	bd_addr_set(&(pcb->bdaddr),bdaddr);
 	if((l2capcb=l2cap_new())==NULL) {
@@ -761,6 +747,7 @@ err_t acl_conn_complete(void *arg,struct bd_addr *bdaddr)
 	//printf("acl_conn_complete\n");
 	//memcpy(&(btstate.acl_bdaddr),bdaddr,6);
 
+	BTDiagnosticConnectionTarget(bdaddr);
 	hci_write_link_policy_settings(bdaddr,0x0005);
 	return ERR_OK;
 }
@@ -846,9 +833,6 @@ err_t l2cap_accepted(void *arg,struct l2cap_pcb *l2cappcb,err_t err)
 	struct bte_pcb *btepcb = (struct bte_pcb*)arg;
 
 	//dbgprintf("l2cap_accepted(%02x)\n",err);
-	if(btepcb != NULL && btepcb->require_security)
-		dbgprintf("[SWTRACE] L2CAP accepted psm=%02x err=%d\r\n",
-			l2cap_psm(l2cappcb), err);
 	if(err==ERR_OK) {
 		l2cap_recv(l2cappcb,bte_process_input);
 		l2cap_disconnect_ind(l2cappcb,l2cap_disconnected_ind);
