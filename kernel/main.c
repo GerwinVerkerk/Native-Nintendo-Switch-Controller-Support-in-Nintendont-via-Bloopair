@@ -539,6 +539,11 @@ int _main( int argc, char *argv[] )
 	thread_cancel(DI_Thread, 0);
 	DIUnregister();
 
+	/* Diagnostic builds collect Bluetooth/PAD events entirely in RAM while the
+	 * game is running.  Persist the two small buffers only after disc I/O has
+	 * stopped, avoiding the synchronous per-line logging that disturbs games. */
+	BTTraceDumpToFile();
+
 	if( ConfigGetConfig(NIN_CFG_MEMCARDEMU) )
 		EXIShutdown();
 

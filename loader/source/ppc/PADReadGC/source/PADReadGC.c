@@ -3,7 +3,7 @@
 #include "HID.h"
 #include "hidmem.h"
 #include "wiidrc.h"
-#include "../../../../../common/include/SwitchProDiag.h"
+#include "../../../../../common/include/SwitchProTrace.h"
 #define PAD_CHAN0_BIT				0x80000000
 
 //from our asm
@@ -29,10 +29,8 @@ static vu32* PADBarrelEnabled = (vu32*)0xD3003140;
 static vu32* PADBarrelPress = (vu32*)0xD3003150;
 
 static volatile struct BTPadCont *BTPad = (volatile struct BTPadCont*)0x932F0000;
-static volatile struct SwitchProArmDiag *SwitchArmDiag =
-	(volatile struct SwitchProArmDiag*)0x932F0100;
-static volatile struct SwitchProPpcDiag *SwitchPpcDiag =
-	(volatile struct SwitchProPpcDiag*)0x932F0200;
+static volatile struct SwitchProTraceBuffer *SwitchPpcTrace =
+	(volatile struct SwitchProTraceBuffer*)0x932F2000;
 static vu32* BTMotor = (vu32*)0x93003040;
 static vu32* BTPadFree = (vu32*)0x93003050;
 static vu32* SIInited = (vu32*)0x93003060;
@@ -46,6 +44,33 @@ static u32 PrevAdapterChannel2 = 0;
 static u32 PrevAdapterChannel3 = 0;
 static u32 PrevAdapterChannel4 = 0;
 static u32 PrevDRCButton = 0;
+static void SwitchTracePpc(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e)
+{
+	u32 index = SwitchPpcTrace->count;
+	volatile struct SwitchProTraceEvent *event;
+	u32 memFlush;
+	if(index >= SWITCH_PRO_TRACE_EVENTS)
+	{
+		SwitchPpcTrace->dropped++;
+		return;
+	}
+	event = &SwitchPpcTrace->events[index];
+	event->sequence = index + 1;
+	event->ticks = 0;
+	event->type = type;
+	event->data[0] = a;
+	event->data[1] = b;
+	event->data[2] = c;
+	event->data[3] = d;
+	event->data[4] = e;
+	SwitchPpcTrace->count = index + 1;
+	memFlush = (u32)event;
+	asm volatile("dcbf 0,%0" : : "b"(memFlush) : "memory");
+	memFlush += 32;
+	asm volatile("dcbf 0,%0" : : "b"(memFlush) : "memory");
+	memFlush = (u32)SwitchPpcTrace;
+	asm volatile("dcbf 0,%0; sync" : : "b"(memFlush) : "memory");
+}
 
 static s8 OffsetX[NIN_CFG_MAXPAD] = {0};
 static s8 OffsetY[NIN_CFG_MAXPAD] = {0};
@@ -851,26 +876,23 @@ u32 PADRead(u32 calledByGame)
 
 		memInvalidate = (u32)&BTPad[chan];
 		asm volatile("dcbi 0,%0; sync" : : "b"(memInvalidate) : "memory");
-		memInvalidate = (u32)SwitchArmDiag;
-		asm volatile("dcbi 0,%0; sync" : : "b"(memInvalidate) : "memory");
-
 		if(BTPad[chan].used == C_NOT_SET)
 			continue;
-		if(SwitchArmDiag->magic == SWITCH_PRO_DIAG_MAGIC &&
-			SwitchArmDiag->publish_channel == chan)
 		{
-			SwitchPpcDiag->magic = SWITCH_PRO_DIAG_MAGIC;
-			SwitchPpcDiag->version = SWITCH_PRO_DIAG_VERSION;
-			SwitchPpcDiag->read_sequence++;
-			SwitchPpcDiag->channel = chan;
-			SwitchPpcDiag->seen_used = BTPad[chan].used;
-			SwitchPpcDiag->seen_buttons = BTPad[chan].button;
-			SwitchPpcDiag->seen_left_x = BTPad[chan].xAxisL;
-			SwitchPpcDiag->seen_left_y = BTPad[chan].yAxisL;
-			SwitchPpcDiag->seen_right_x = BTPad[chan].xAxisR;
-			SwitchPpcDiag->seen_right_y = BTPad[chan].yAxisR;
+			u32 axes_l = ((u16)BTPad[chan].xAxisL << 16) |
+				(u16)BTPad[chan].yAxisL;
+			u32 axes_r = ((u16)BTPad[chan].xAxisR << 16) |
+				(u16)BTPad[chan].yAxisR;
+			u32 signature = BTPad[chan].used ^ BTPad[chan].button ^
+				axes_l ^ axes_r ^ chan;
+			if(SwitchPpcTrace->flags != signature)
+			{
+				SwitchTracePpc(SWITCH_TRACE_PPC_READ, chan,
+					BTPad[chan].used, BTPad[chan].button, axes_l,
+					axes_r);
+				SwitchPpcTrace->flags = signature;
+			}
 		}
-
 		used |= (1<<chan);
 
 		Rumble |= ((1<<31)>>chan);
@@ -1531,22 +1553,22 @@ u32 PADRead(u32 calledByGame)
 		}
 
 		Pad[chan].button = button;
-		if(SwitchArmDiag->magic == SWITCH_PRO_DIAG_MAGIC &&
-			SwitchArmDiag->publish_channel == chan)
 		{
-			SwitchPpcDiag->pad_buttons = Pad[chan].button;
-			SwitchPpcDiag->pad_stick_x = Pad[chan].stickX;
-			SwitchPpcDiag->pad_stick_y = Pad[chan].stickY;
-			SwitchPpcDiag->pad_substick_x = Pad[chan].substickX;
-			SwitchPpcDiag->pad_substick_y = Pad[chan].substickY;
-			if(Pad[chan].button & PAD_BUTTON_A)
-				SwitchPpcDiag->selftest_a_seen = 1;
-			memFlush = (u32)SwitchPpcDiag;
-			asm volatile("dcbf 0,%0" : : "b"(memFlush) : "memory");
-			memFlush += 32;
-			asm volatile("dcbf 0,%0; sync" : : "b"(memFlush) : "memory");
+			u32 pad_axes = ((u8)Pad[chan].stickX << 24) |
+				((u8)Pad[chan].stickY << 16) |
+				((u8)Pad[chan].substickX << 8) |
+				(u8)Pad[chan].substickY;
+			u32 signature = Pad[chan].button ^ pad_axes ^ chan;
+			if(SwitchPpcTrace->reserved[0] != signature)
+			{
+				SwitchTracePpc(SWITCH_TRACE_PPC_PAD, chan,
+					Pad[chan].button, pad_axes,
+					((u32)Pad[chan].triggerLeft << 16) |
+						(u16)Pad[chan].triggerRight,
+					used);
+				SwitchPpcTrace->reserved[0] = signature;
+			}
 		}
-
 //#define DEBUG_cStick	1
 		#ifdef DEBUG_cStick
 			//mirrors cStick on main Stick so f-Zero GX calibration can be used

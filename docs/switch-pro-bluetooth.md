@@ -145,6 +145,30 @@ to show its generic disc error during startup; restoring the stable build and
 turning Log off restored normal startup. The paced build removes that packet
 trace and does not require file logging.
 
+### Bounded ARM/PPC trace build
+
+The boundary-trace build does not use Nintendont's general logger and requires
+**Log = Off**. During play it records at most 80 fixed-size events per CPU in
+two reserved RAM regions. ARM records security phases, Switch subcommands,
+selected raw HID reports, parser output, channel assignment and `BTPadCont`
+publication. PPC records changes observed in `BTPadCont` and the resulting
+GameCube `PADStatus`.
+
+Nothing is written to storage while the game is running. After a normal game
+exit, once disc I/O has stopped, the kernel writes the two 4096-byte regions in
+one bounded operation to `/switch-pro-trace.bin` on the active game volume.
+Decode it on a development host with:
+
+```sh
+python3 tools/decode_switch_pro_trace.py switch-pro-trace.bin
+```
+
+For a useful capture, connect the Switch Pro, wait for its fixed player LED,
+press A/B/X/Y separately, move both sticks through their range, then exit
+Nintendont normally with a known-working GameCube controller. Retrieve the
+trace file only after the return to the loader/menu. The LED diagnostics are
+not part of interpreting this trace.
+
 Record pass/fail and any LED behavior for every step:
 
 1. **Pairing persistence:** pair under Aroma/Bloopair, power the controller off,

@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 void BTInit(void);
 void BTUpdateRegisters(void);
+void BTTraceDumpToFile(void);
 
 #define BT_DIAG_FOUND             1
 #define BT_DIAG_SSP_COMPLETE      2

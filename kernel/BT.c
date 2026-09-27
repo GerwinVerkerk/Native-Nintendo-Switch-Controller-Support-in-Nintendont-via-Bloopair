@@ -30,7 +30,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "lwbt/physbusif.h"
 #include "Config.h"
 #include "SwitchPro.h"
+#include "ff_utf8.h"
 #include "../common/include/SwitchProDiag.h"
+#include "../common/include/SwitchProTrace.h"
 
 extern int dbgprintf( const char *fmt, ...);
 
@@ -62,6 +64,12 @@ static struct SwitchProArmDiag *SwitchArmDiag =
 	(struct SwitchProArmDiag*)SWITCH_PRO_DIAG_ARM_ADDR;
 static struct SwitchProPpcDiag *SwitchPpcDiag =
 	(struct SwitchProPpcDiag*)SWITCH_PRO_DIAG_PPC_ADDR;
+static struct SwitchProTraceBuffer *SwitchArmTrace =
+	(struct SwitchProTraceBuffer*)SWITCH_PRO_TRACE_ARM_ADDR;
+static struct SwitchProTraceBuffer *SwitchPpcTrace =
+	(struct SwitchProTraceBuffer*)SWITCH_PRO_TRACE_PPC_ADDR;
+static struct SwitchProInput SwitchTraceLastInput;
+static u8 SwitchTraceLastInputValid = 0;
 
 static vu32* BTMotor = (u32*)0x13003040;
 static vu32* BTPadFree = (u32*)0x13003050;
@@ -109,6 +117,43 @@ static const u8 LEDState[] = { 0x10, 0x20, 0x40, 0x80, 0xF0 };
 static const s8 DEADZONE = 0x1A;
 
 static void BTSwitchStartProtocol(struct BTPadStat *stat);
+
+static void BTSwitchTraceArm(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e,
+	u32 f, u32 g, u32 h, u32 i)
+{
+	u32 index = SwitchArmTrace->count;
+	struct SwitchProTraceEvent *event;
+	if(index >= SWITCH_PRO_TRACE_EVENTS)
+	{
+		SwitchArmTrace->dropped++;
+		return;
+	}
+	event = &SwitchArmTrace->events[index];
+	event->sequence = index + 1;
+	event->ticks = read32(HW_TIMER);
+	event->type = type;
+	event->data[0] = a;
+	event->data[1] = b;
+	event->data[2] = c;
+	event->data[3] = d;
+	event->data[4] = e;
+	event->data[5] = f;
+	event->data[6] = g;
+	event->data[7] = h;
+	event->data[8] = i;
+	SwitchArmTrace->count = index + 1;
+}
+
+static u32 BTSwitchTraceWord(const u8 *buffer, u16 len, u16 offset)
+{
+	u32 value = 0;
+	u16 copy = len > offset ? len - offset : 0;
+	if(copy > 4)
+		copy = 4;
+	if(copy)
+		memcpy(&value, buffer + offset, copy);
+	return value;
+}
 
 static struct BTPadStat *BTFindSwitchStat(const struct bd_addr *bdaddr)
 {
@@ -161,6 +206,8 @@ void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr)
 	if(phase == BTDiagnosticStage + 1)
 	{
 		BTDiagnosticStage = phase;
+		BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, phase, 0, 0, 0, 0,
+			0, 0, 0, 0);
 	}
 }
 
@@ -232,6 +279,8 @@ void BTDiagnosticAuthenticationCommandResult(u8 result)
 
 void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 {
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, BT_DIAG_AUTHENTICATED,
+		result, 0, 0, 0, 0, 0, 0, 0);
 	if(!BTDiagnosticTargetSet || bdaddr == NULL ||
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
 			sizeof(BTDiagnosticTarget.addr)) != 0)
@@ -254,6 +303,8 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr)
 {
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, BT_DIAG_ENCRYPTED,
+		result, enabled, 0, 0, 0, 0, 0, 0);
 	struct BTPadStat *stat;
 	if(!BTDiagnosticTargetSet || bdaddr == NULL ||
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
@@ -290,6 +341,12 @@ static s32 BTSwitchSendSubcommand(struct BTPadStat *stat, u8 command,
 	u8 report[16];
 	u16 len = SwitchProBuildSubcommand(&stat->switch_state, report,
 		sizeof(report), command, data, data_len);
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_TX_SUBCOMMAND, command, data_len,
+		len, stat->switch_state.init_state, stat->switch_state.init_retries,
+		BTSwitchTraceWord(report, len, 0),
+		BTSwitchTraceWord(report, len, 4),
+		BTSwitchTraceWord(report, len, 8),
+		BTSwitchTraceWord(report, len, 12));
 	if(len)
 		return bte_senddata(stat->sock, report, len);
 	return ERR_VAL;
@@ -385,6 +442,15 @@ static void BTSwitchPublishInput(struct BTPadStat *stat)
 	 * PPC consumes the already-supported Classic Controller Pro contract. */
 	BTPad[chan].used = C_CCP;
 	sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PUBLISH, chan, C_CCP, buttons,
+		((u16)stat->switch_input.left_x << 16) |
+			(u16)stat->switch_input.left_y,
+		((u16)stat->switch_input.right_x << 16) |
+			(u16)stat->switch_input.right_y,
+		BTSwitchTraceWord((const u8*)&BTPad[chan], sizeof(struct BTPadCont), 0),
+		BTSwitchTraceWord((const u8*)&BTPad[chan], sizeof(struct BTPadCont), 4),
+		BTSwitchTraceWord((const u8*)&BTPad[chan], sizeof(struct BTPadCont), 8),
+		BTSwitchTraceWord((const u8*)&BTPad[chan], sizeof(struct BTPadCont), 12));
 	BTDiagnosticSwitchButtons = buttons;
 	BTDiagnosticSwitchChannel = chan;
 	if(BTDiagnosticStage < BT_DIAG_INPUT_RECEIVED)
@@ -411,6 +477,26 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 		(const u8*)buffer, len, &input);
 	u8 stream_ready = SwitchProTrackStreamReport(&stat->switch_state,
 		report_id, parsed);
+	if(report_id == SWITCH_PRO_REPORT_COMMAND ||
+		(parsed && (!SwitchTraceLastInputValid ||
+		memcmp(&SwitchTraceLastInput, &input, sizeof(input)) != 0)))
+	{
+		BTSwitchTraceArm(SWITCH_TRACE_ARM_RX_REPORT, report_id, len, parsed,
+			stream_ready, BTSwitchTraceWord(buffer, len, 0),
+			BTSwitchTraceWord(buffer, len, 4),
+			BTSwitchTraceWord(buffer, len, 8),
+			BTSwitchTraceWord(buffer, len, 12),
+			BTSwitchTraceWord(buffer, len, 16));
+		if(parsed)
+		{
+			SwitchTraceLastInput = input;
+			SwitchTraceLastInputValid = 1;
+			BTSwitchTraceArm(SWITCH_TRACE_ARM_PARSE, input.buttons,
+				((u16)input.left_x << 16) | (u16)input.left_y,
+				((u16)input.right_x << 16) | (u16)input.right_y,
+				report_id, stat->switch_input_reports, 0, 0, 0, 0);
+		}
+	}
 	{
 		u32 sequence = ++SwitchArmDiag->report_sequence;
 		struct SwitchProDiagReport *entry =
@@ -1252,6 +1338,21 @@ void BTInit(void)
 	sync_after_write(SwitchArmDiag, sizeof(struct SwitchProArmDiag));
 	memset(SwitchPpcDiag, 0, sizeof(struct SwitchProPpcDiag));
 	sync_after_write(SwitchPpcDiag, sizeof(struct SwitchProPpcDiag));
+	memset(SwitchArmTrace, 0, SWITCH_PRO_TRACE_REGION_SIZE);
+	SwitchArmTrace->magic = SWITCH_PRO_TRACE_MAGIC;
+	SwitchArmTrace->version = SWITCH_PRO_TRACE_VERSION;
+	SwitchArmTrace->writer = SWITCH_TRACE_WRITER_ARM;
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_INIT, sizeof(struct BTPadCont),
+		sizeof(struct SwitchProTraceBuffer), SWITCH_PRO_TRACE_REGION_SIZE,
+		0, 0, 0, 0, 0, 0);
+	sync_after_write(SwitchArmTrace, SWITCH_PRO_TRACE_REGION_SIZE);
+	memset(SwitchPpcTrace, 0, SWITCH_PRO_TRACE_REGION_SIZE);
+	SwitchPpcTrace->magic = SWITCH_PRO_TRACE_MAGIC;
+	SwitchPpcTrace->version = SWITCH_PRO_TRACE_VERSION;
+	SwitchPpcTrace->writer = SWITCH_TRACE_WRITER_PPC;
+	sync_after_write(SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE);
+	memset(&SwitchTraceLastInput, 0, sizeof(SwitchTraceLastInput));
+	SwitchTraceLastInputValid = 0;
 	memset(BTKeys, 0, sizeof(struct linkkey_info) * CONF_PAD_MAX_REGISTERED);
 
 	memset(BTPad, 0, sizeof(struct BTPadCont)*4);
@@ -1272,6 +1373,29 @@ void BTInit(void)
 		BTUpdateRegisters();
 		udelay(200);
 	}
+}
+
+void BTTraceDumpToFile(void)
+{
+	FIL trace;
+	u32 wrote;
+	if(SwitchArmTrace->magic != SWITCH_PRO_TRACE_MAGIC ||
+		SwitchArmTrace->count == 0)
+		return;
+	sync_before_read(SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE);
+	if(f_open_char(&trace, "/switch-pro-trace.bin",
+		FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+		return;
+	wrote = 0;
+	if(f_write(&trace, SwitchArmTrace, SWITCH_PRO_TRACE_REGION_SIZE,
+		&wrote) != FR_OK || wrote != SWITCH_PRO_TRACE_REGION_SIZE)
+	{
+		f_close(&trace);
+		return;
+	}
+	wrote = 0;
+	f_write(&trace, SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE, &wrote);
+	f_close(&trace);
 }
 
 void BTUpdateRegisters(void)
@@ -1358,6 +1482,13 @@ void BTUpdateRegisters(void)
 
 		if(LastChan != CurChan || LastRumble != CurRumble)
 		{
+			if(BTPadConnected[i]->transfertype == TRANSFER_SWITCH_PRO)
+				BTSwitchTraceArm(SWITCH_TRACE_ARM_CHANNEL, LastChan,
+					CurChan, LastRumble, CurRumble,
+					BTPadConnected[i]->controller,
+					BTPadConnected[i]->switch_input_valid,
+					BTPadConnected[i]->switch_input_reports,
+					BTPadConnected[i]->switch_publish_count, 0);
 			if(CurChan == CHAN_NOT_SET || ((LastChan != CHAN_NOT_SET) && CurChan < LastChan))
 			{
 				BTPad[LastChan].used = C_NOT_SET;
@@ -1388,6 +1519,8 @@ void BTUpdateRegisters(void)
 				 * second once, then return permanently to live controller data. */
 				BTPadConnected[i]->switch_selftest_state = 1;
 				BTPadConnected[i]->switch_selftest_timer = read32(HW_TIMER);
+				BTSwitchTraceArm(SWITCH_TRACE_ARM_SELFTEST, 1, CurChan,
+					0, 0, 0, 0, 0, 0, 0);
 			}
 			BTSwitchPublishInput(BTPadConnected[i]);
 			if(BTPadConnected[i]->switch_led_channel != CurChan)
@@ -1408,6 +1541,8 @@ void BTUpdateRegisters(void)
 			else
 			{
 				BTPadConnected[i]->switch_selftest_state = 2;
+				BTSwitchTraceArm(SWITCH_TRACE_ARM_SELFTEST, 2,
+					BTPadConnected[i]->channel, 0, 0, 0, 0, 0, 0, 0);
 				BTSwitchPublishInput(BTPadConnected[i]);
 				sync_after_write(BTPadConnected[i], sizeof(struct BTPadStat));
 			}
