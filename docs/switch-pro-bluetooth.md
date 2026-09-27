@@ -206,6 +206,15 @@ Observed on Wii U hardware:
   follow-up therefore also replaces all-zero rumble payloads with the explicit
   neutral frames used by established Switch hosts. These corrections are not
   yet hardware-validated.
+- Build `81780d3` still delivered no GameCube button or stick input. SYNC alone
+  left the Switch Pro player LEDs sweeping; pressing A then caused a vibration
+  and a fixed player-1 LED, but no control affected Double Dash. The fixed LED
+  was not proof of GameCube channel assignment because initialization had
+  already requested player LED 1. The next diagnostic build therefore requests
+  all four Switch player LEDs while provisional, changes to one LED only after
+  PADReadGC exposes a real channel, and mirrors live A/B/X/Y parsing on the Wii
+  Remote LEDs. The input diagnostic is also delayed until a `BTPadCont` write
+  actually occurs rather than merely parsing three reports.
 
 The current implementation keeps the proven authentication/encryption gate and
 adds the missing initialization sequence found by comparison with Bloopair,

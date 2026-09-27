@@ -53,6 +53,8 @@ static u8 BTDiagnosticAuthenticated = 0;
 static u8 BTDiagnosticEncrypted = 0;
 static u8 BTDiagnosticBlinkOn = 1;
 static u32 BTDiagnosticBlinkTimer = 0;
+static volatile u32 BTDiagnosticSwitchButtons = 0;
+static volatile u32 BTDiagnosticSwitchChannel = 4;
 
 static struct BTPadCont *BTPad = (struct BTPadCont*)0x132F0000;
 
@@ -315,7 +317,10 @@ static void BTSwitchUpdateProtocol(struct BTPadStat *stat)
 {
 	u16 delay_ms = SwitchProInitDelayMs(&stat->switch_state);
 	u8 action;
-	u8 led = 1;
+	/* All four LEDs identify the provisional, not-yet-assigned state.  The
+	 * main loop replaces this with exactly one LED only after PADReadGC has
+	 * exposed a real free GameCube channel. */
+	u8 led = 0x0F;
 
 	if(delay_ms == 0 || TimerDiffTicks(stat->switch_init_timer) <
 		(u32)delay_ms * SWITCH_PRO_TIMER_TICKS_PER_MS)
@@ -347,6 +352,10 @@ static void BTSwitchPublishInput(struct BTPadStat *stat)
 	BTPad[chan].triggerR = 0;
 	BTPad[chan].used = stat->controller;
 	sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
+	BTDiagnosticSwitchButtons = stat->switch_input.buttons;
+	BTDiagnosticSwitchChannel = chan;
+	if(BTDiagnosticStage < BT_DIAG_INPUT_RECEIVED)
+		BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
 	stat->switch_publish_count++;
 }
 
@@ -368,7 +377,6 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 		stat->switch_input_reports++;
 		if(stream_ready && !(stat->controller & C_SWITCH_PRO))
 		{
-			BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
 			stat->controller = C_CCP | C_SWITCH_PRO;
 			sync_after_write(stat, sizeof(struct BTPadStat));
 		}
@@ -1172,6 +1180,8 @@ void BTInit(void)
 	BTDiagnosticEncrypted = 0;
 	BTDiagnosticBlinkOn = 1;
 	BTDiagnosticBlinkTimer = read32(HW_TIMER);
+	BTDiagnosticSwitchButtons = 0;
+	BTDiagnosticSwitchChannel = CHAN_NOT_SET;
 	memset(BTKeys, 0, sizeof(struct linkkey_info) * CONF_PAD_MAX_REGISTERED);
 
 	memset(BTPad, 0, sizeof(struct BTPadCont)*4);
@@ -1314,8 +1324,27 @@ void BTUpdateRegisters(void)
 		{
 			u32 visible_stage = (BTDiagnosticStage == BT_DIAG_HID_OPEN &&
 				BTDiagnosticAuthRequested) ? BT_DIAG_AUTH_REQUESTED : BTDiagnosticStage;
-			u32 diagnostic_state = SwitchProDiagnosticLED(visible_stage,
-				BTDiagnosticBlinkOn) | CurRumble;
+			u32 diagnostic_state;
+			if(visible_stage == BT_DIAG_INPUT_RECEIVED &&
+				BTDiagnosticSwitchChannel < CHAN_NOT_SET)
+			{
+				u32 buttons = BTDiagnosticSwitchButtons;
+				/* Once a BTPad write has happened, show the assigned channel
+				 * while idle and give face buttons unmistakable live patterns. */
+				diagnostic_state = LEDState[BTDiagnosticSwitchChannel];
+				if(buttons & SWITCH_PRO_BTN_A)
+					diagnostic_state = 0xF0;
+				else if(buttons & SWITCH_PRO_BTN_B)
+					diagnostic_state = 0x30;
+				else if(buttons & SWITCH_PRO_BTN_X)
+					diagnostic_state = 0xC0;
+				else if(buttons & SWITCH_PRO_BTN_Y)
+					diagnostic_state = 0x90;
+				diagnostic_state |= CurRumble;
+			}
+			else
+				diagnostic_state = SwitchProDiagnosticLED(visible_stage,
+					BTDiagnosticBlinkOn) | CurRumble;
 			if(BTPadConnected[i]->diagnostic_state != diagnostic_state)
 			{
 				BTSetControllerState(BTPadConnected[i]->sock, diagnostic_state);
