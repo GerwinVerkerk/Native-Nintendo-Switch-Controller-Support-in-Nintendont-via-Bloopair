@@ -18,8 +18,14 @@ USB adapter.
   initially keeps the controller's compatibility `0x3f` input mode instead of
   forcing full `0x30` mode.
 - Parses both full `0x30`/`0x21` reports and fallback `0x3f` basic reports.
+- Parses the standard `0x3f` HID button map and little-endian 16-bit axes used
+  by original Switch Pro Controllers.
 - Maps A/B/X/Y, D-pad, both sticks, L/R/ZL/ZR, Plus and Home through
   Nintendont's existing GameCube controller path.
+- Caches the latest valid input report until Nintendont assigns a GameCube
+  channel, then publishes it immediately instead of waiting for another packet.
+- Uses Nintendo's neutral rumble frames in every subcommand and updates the
+  controller player LED to the GameCube channel actually assigned.
 - Reopens the Bluetooth listeners after a Switch Pro disconnect and answers
   later link-key requests from the persisted controller key list.
 
@@ -191,6 +197,15 @@ Observed on Wii U hardware:
 - Trace build `f33d5a7` with Nintendont Log enabled caused Double Dash's generic
   disc error and produced no usable trace file. It was rolled back. The paced
   build removes all `[SWTRACE]` packet logging and must be tested with Log off.
+- Build `01266a8` eventually reached a fixed Switch Pro player LED and genuine
+  streaming-report readiness, but no button or stick affected Double Dash on
+  any tested player channel. Code review then found that its `0x3f` parser used
+  the wrong face/shoulder bits and byte order. It also discarded the report
+  that made the stream ready because channel assignment occurred in the next
+  main-loop pass. Button mashing coincided with controller vibration; this
+  follow-up therefore also replaces all-zero rumble payloads with the explicit
+  neutral frames used by established Switch hosts. These corrections are not
+  yet hardware-validated.
 
 The current implementation keeps the proven authentication/encryption gate and
 adds the missing initialization sequence found by comparison with Bloopair,
@@ -199,7 +214,9 @@ the receive callback, starts with Device Info `0x02`, enforces pacing/retries,
 sets the player LED only after the matching ACK, and requires three genuine
 streaming reports before publishing a GameCube controller. Command reply
 `0x21` can no longer claim a player slot. The full-report button bit layout was
-also corrected to match the published Switch protocol.
+also corrected to match the published Switch protocol. The follow-up corrects
+the separate basic-report layout, preserves the latest report across channel
+assignment, and uses silent subcommand rumble frames.
 
 Still requires Wii U hardware:
 

@@ -27,9 +27,9 @@ static s16 clamp_axis(s32 value)
 	return (s16)value;
 }
 
-static u16 read_be16(const u8 *data)
+static u16 read_le16(const u8 *data)
 {
-	return ((u16)data[0] << 8) | data[1];
+	return data[0] | ((u16)data[1] << 8);
 }
 
 static u16 switch_axis_x(const u8 *data)
@@ -94,22 +94,24 @@ static void parse_basic(const u8 *report, struct SwitchProInput *input)
 	u8 shared = report[2];
 	u32 buttons = 0;
 
-	input->left_x = clamp_axis(((s32)read_be16(&report[4]) - 0x8000) >> 8);
-	input->left_y = clamp_axis(((s32)read_be16(&report[6]) - 0x8000) >> 8);
-	input->right_x = clamp_axis(((s32)read_be16(&report[8]) - 0x8000) >> 8);
-	input->right_y = clamp_axis(((s32)read_be16(&report[10]) - 0x8000) >> 8);
+	input->left_x = clamp_axis(((s32)read_le16(&report[4]) - 0x8000) >> 8);
+	input->left_y = clamp_axis(-(((s32)read_le16(&report[6]) - 0x8000) >> 8));
+	input->right_x = clamp_axis(((s32)read_le16(&report[8]) - 0x8000) >> 8);
+	input->right_y = clamp_axis(-(((s32)read_le16(&report[10]) - 0x8000) >> 8));
 
-	if(primary & 0x40) buttons |= SWITCH_PRO_BTN_A;
-	if(primary & 0x80) buttons |= SWITCH_PRO_BTN_B;
-	if(primary & 0x10) buttons |= SWITCH_PRO_BTN_X;
-	if(primary & 0x20) buttons |= SWITCH_PRO_BTN_Y;
-	if(primary & 0x08) buttons |= SWITCH_PRO_BTN_L;
-	if(primary & 0x04) buttons |= SWITCH_PRO_BTN_R;
-	if(primary & 0x02) buttons |= SWITCH_PRO_BTN_ZL;
-	if(primary & 0x01) buttons |= SWITCH_PRO_BTN_ZR;
-	if(shared & 0x40) buttons |= SWITCH_PRO_BTN_PLUS;
-	if(shared & 0x80) buttons |= SWITCH_PRO_BTN_MINUS;
-	if(shared & 0x08) buttons |= SWITCH_PRO_BTN_HOME;
+	/* Simple report 0x3f follows the standard HID mapping used by SDL
+	 * and BlueRetro, not the native 0x30 button layout. */
+	if(primary & 0x02) buttons |= SWITCH_PRO_BTN_A;
+	if(primary & 0x01) buttons |= SWITCH_PRO_BTN_B;
+	if(primary & 0x08) buttons |= SWITCH_PRO_BTN_X;
+	if(primary & 0x04) buttons |= SWITCH_PRO_BTN_Y;
+	if(primary & 0x10) buttons |= SWITCH_PRO_BTN_L;
+	if(primary & 0x20) buttons |= SWITCH_PRO_BTN_R;
+	if(primary & 0x40) buttons |= SWITCH_PRO_BTN_ZL;
+	if(primary & 0x80) buttons |= SWITCH_PRO_BTN_ZR;
+	if(shared & 0x02) buttons |= SWITCH_PRO_BTN_PLUS;
+	if(shared & 0x01) buttons |= SWITCH_PRO_BTN_MINUS;
+	if(shared & 0x10) buttons |= SWITCH_PRO_BTN_HOME;
 	add_dpad(report[3] & 0x0F, &buttons);
 	input->buttons = buttons;
 }
@@ -157,6 +159,13 @@ u16 SwitchProBuildSubcommand(struct SwitchProState *state, u8 *report,
 	clear_bytes(report, size);
 	report[0] = 0x01;
 	report[1] = state->report_counter++ & 0x0F;
+	/* A subcommand report always carries two four-byte rumble frames.
+	 * 00 01 40 40 is Nintendo's neutral/silent frame; all-zero frames
+	 * are not a portable way to request silence. */
+	report[2] = 0x00; report[3] = 0x01;
+	report[4] = 0x40; report[5] = 0x40;
+	report[6] = 0x00; report[7] = 0x01;
+	report[8] = 0x40; report[9] = 0x40;
 	report[10] = command;
 	if(data_len && data != 0)
 		copy_bytes(&report[11], data, data_len);

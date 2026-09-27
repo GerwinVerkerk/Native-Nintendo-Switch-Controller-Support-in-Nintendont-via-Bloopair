@@ -66,6 +66,11 @@ struct BTPadStat {
 	struct bd_addr bdaddr;
 	struct SwitchProState switch_state;
 	u32 switch_init_timer;
+	struct SwitchProInput switch_input;
+	u32 switch_input_valid;
+	u32 switch_input_reports;
+	u32 switch_publish_count;
+	u32 switch_led_channel;
 } ALIGNED(32);
 
 struct BTPadCont {

@@ -330,6 +330,26 @@ static void BTSwitchUpdateProtocol(struct BTPadStat *stat)
 	sync_after_write(stat, sizeof(struct BTPadStat));
 }
 
+static void BTSwitchPublishInput(struct BTPadStat *stat)
+{
+	u32 chan = stat->channel;
+	if(!stat->switch_input_valid || chan == CHAN_NOT_SET ||
+		stat->controller == C_NOT_SET)
+		return;
+
+	sync_before_read(&BTPad[chan], sizeof(struct BTPadCont));
+	BTPad[chan].xAxisL = stat->switch_input.left_x;
+	BTPad[chan].yAxisL = stat->switch_input.left_y;
+	BTPad[chan].xAxisR = stat->switch_input.right_x;
+	BTPad[chan].yAxisR = stat->switch_input.right_y;
+	BTPad[chan].button = stat->switch_input.buttons;
+	BTPad[chan].triggerL = 0;
+	BTPad[chan].triggerR = 0;
+	BTPad[chan].used = stat->controller;
+	sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
+	stat->switch_publish_count++;
+}
+
 static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 {
 	struct SwitchProInput input;
@@ -343,6 +363,9 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 	if(parsed && (report_id == SWITCH_PRO_REPORT_FULL ||
 		report_id == SWITCH_PRO_REPORT_BASIC))
 	{
+		stat->switch_input = input;
+		stat->switch_input_valid = 1;
+		stat->switch_input_reports++;
 		if(stream_ready && !(stat->controller & C_SWITCH_PRO))
 		{
 			BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
@@ -350,18 +373,7 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 			sync_after_write(stat, sizeof(struct BTPadStat));
 		}
 		if(stream_ready && chan != CHAN_NOT_SET)
-		{
-			sync_before_read(&BTPad[chan], sizeof(struct BTPadCont));
-			BTPad[chan].xAxisL = input.left_x;
-			BTPad[chan].yAxisL = input.left_y;
-			BTPad[chan].xAxisR = input.right_x;
-			BTPad[chan].yAxisR = input.right_y;
-			BTPad[chan].button = input.buttons;
-			BTPad[chan].triggerL = 0;
-			BTPad[chan].triggerR = 0;
-			BTPad[chan].used = stat->controller;
-			sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
-		}
+			BTSwitchPublishInput(stat);
 	}
 
 	/* Command responses place the acknowledgement and subcommand at 13/14.
@@ -920,6 +932,10 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 	{
 		SwitchProReset(&stat->switch_state);
 		stat->switch_init_timer = 0;
+		stat->switch_input_valid = 0;
+		stat->switch_input_reports = 0;
+		stat->switch_publish_count = 0;
+		stat->switch_led_channel = CHAN_NOT_SET;
 		stat->transferstate = TRANSFER_DONE;
 		/* Only claim a player slot after a valid Switch input report arrives. */
 		stat->controller = C_NOT_SET;
@@ -987,6 +1003,10 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 		stat->controller = C_NOT_SET;
 		stat->diagnostic_state = 0;
 		SwitchProReset(&stat->switch_state);
+		stat->switch_input_valid = 0;
+		stat->switch_input_reports = 0;
+		stat->switch_publish_count = 0;
+		stat->switch_led_channel = CHAN_NOT_SET;
 		sync_after_write(stat, sizeof(struct BTPadStat));
 		bte_registerdeviceasync(stat->sock, &stat->bdaddr, BTHandleConnect);
 	}
@@ -1270,6 +1290,23 @@ void BTUpdateRegisters(void)
 				BTSetControllerState(BTPadConnected[i]->sock, LEDState[CurChan]);
 			BTPadConnected[i]->diagnostic_state = 0xFFFFFFFF;
 			sync_after_write(BTPadConnected[i], sizeof(struct BTPadStat));
+		}
+		if(BTPadConnected[i]->transfertype == TRANSFER_SWITCH_PRO &&
+			CurChan != CHAN_NOT_SET && LastChan != CurChan)
+		{
+			/* The stream may go quiet immediately after the three reports that
+			 * made it ready. Publish the cached latest state as soon as PADReadGC
+			 * assigns a real channel, rather than waiting for another packet. */
+			BTSwitchPublishInput(BTPadConnected[i]);
+			if(BTPadConnected[i]->switch_led_channel != CurChan)
+			{
+				u8 player_led = 1 << CurChan;
+				BTSwitchSendSubcommand(BTPadConnected[i],
+					SWITCH_PRO_SUBCMD_PLAYER_LED, &player_led, 1);
+				BTPadConnected[i]->switch_led_channel = CurChan;
+				sync_after_write(BTPadConnected[i],
+					sizeof(struct BTPadStat));
+			}
 		}
 		if(BTPadConnected[i]->transfertype == TRANSFER_SWITCH_PRO)
 			BTSwitchUpdateProtocol(BTPadConnected[i]);

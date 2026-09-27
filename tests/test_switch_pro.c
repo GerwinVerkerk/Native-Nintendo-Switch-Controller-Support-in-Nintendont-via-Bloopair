@@ -53,9 +53,9 @@ static void test_basic_report_and_first_packet_drop(void)
 	struct SwitchProState state;
 	struct SwitchProInput input;
 	u8 report[12] = {
-		SWITCH_PRO_REPORT_BASIC, 0x40 | 0x08 | 0x02,
-		0x80, 0x01,
-		0x80, 0x00, 0x80, 0x00,
+		SWITCH_PRO_REPORT_BASIC, 0x02 | 0x10 | 0x40,
+		0x01, 0x01,
+		0x00, 0x80, 0x00, 0x80,
 		0xFF, 0xFF, 0x00, 0x00
 	};
 
@@ -63,7 +63,7 @@ static void test_basic_report_and_first_packet_drop(void)
 	assert(SwitchProParseReport(&state, report, sizeof(report), &input) == 0);
 	assert(SwitchProParseReport(&state, report, sizeof(report), &input) == 1);
 	assert(input.left_x == 0 && input.left_y == 0);
-	assert(input.right_x == 127 && input.right_y == -128);
+	assert(input.right_x == 127 && input.right_y == 127);
 	assert(input.buttons & SWITCH_PRO_BTN_A);
 	assert(input.buttons & SWITCH_PRO_BTN_L);
 	assert(input.buttons & SWITCH_PRO_BTN_ZL);
@@ -123,17 +123,17 @@ static void test_basic_button_bits_individually(void)
 		u32 expected;
 	};
 	static const struct ButtonCase cases[] = {
-		{1, 0x40, SWITCH_PRO_BTN_A},
-		{1, 0x80, SWITCH_PRO_BTN_B},
-		{1, 0x10, SWITCH_PRO_BTN_X},
-		{1, 0x20, SWITCH_PRO_BTN_Y},
-		{1, 0x08, SWITCH_PRO_BTN_L},
-		{1, 0x04, SWITCH_PRO_BTN_R},
-		{1, 0x02, SWITCH_PRO_BTN_ZL},
-		{1, 0x01, SWITCH_PRO_BTN_ZR},
-		{2, 0x40, SWITCH_PRO_BTN_PLUS},
-		{2, 0x80, SWITCH_PRO_BTN_MINUS},
-		{2, 0x08, SWITCH_PRO_BTN_HOME}
+		{1, 0x02, SWITCH_PRO_BTN_A},
+		{1, 0x01, SWITCH_PRO_BTN_B},
+		{1, 0x08, SWITCH_PRO_BTN_X},
+		{1, 0x04, SWITCH_PRO_BTN_Y},
+		{1, 0x10, SWITCH_PRO_BTN_L},
+		{1, 0x20, SWITCH_PRO_BTN_R},
+		{1, 0x40, SWITCH_PRO_BTN_ZL},
+		{1, 0x80, SWITCH_PRO_BTN_ZR},
+		{2, 0x02, SWITCH_PRO_BTN_PLUS},
+		{2, 0x01, SWITCH_PRO_BTN_MINUS},
+		{2, 0x10, SWITCH_PRO_BTN_HOME}
 	};
 	struct SwitchProState state;
 	struct SwitchProInput input;
@@ -146,13 +146,52 @@ static void test_basic_button_bits_individually(void)
 		SwitchProReset(&state);
 		report[0] = SWITCH_PRO_REPORT_BASIC;
 		report[3] = 8;
-		report[4] = report[6] = report[8] = report[10] = 0x80;
+		report[5] = report[7] = report[9] = report[11] = 0x80;
 		report[cases[i].offset] = cases[i].bit;
 		assert(SwitchProParseReport(&state, report, sizeof(report),
 			&input) == 0);
 		assert(SwitchProParseReport(&state, report, sizeof(report),
 			&input) == 1);
 		assert(input.buttons == cases[i].expected);
+	}
+}
+
+static void test_basic_dpad_and_axis_endianness(void)
+{
+	static const u32 expected_dpad[] = {
+		SWITCH_PRO_BTN_UP,
+		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_DOWN,
+		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_LEFT,
+		SWITCH_PRO_BTN_LEFT,
+		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_LEFT,
+		0
+	};
+	struct SwitchProState state;
+	struct SwitchProInput input;
+	u8 report[12];
+	u32 i;
+
+	for(i = 0; i < sizeof(expected_dpad) / sizeof(expected_dpad[0]); i++)
+	{
+		memset(report, 0, sizeof(report));
+		SwitchProReset(&state);
+		report[0] = SWITCH_PRO_REPORT_BASIC;
+		report[3] = i;
+		/* Little-endian axes: left is right/up, right is left/down. */
+		report[4] = 0xFF; report[5] = 0xFF;
+		report[6] = 0x00; report[7] = 0x00;
+		report[8] = 0x00; report[9] = 0x00;
+		report[10] = 0xFF; report[11] = 0xFF;
+		assert(SwitchProParseReport(&state, report, sizeof(report),
+			&input) == 0);
+		assert(SwitchProParseReport(&state, report, sizeof(report),
+			&input) == 1);
+		assert(input.buttons == expected_dpad[i]);
+		assert(input.left_x == 127 && input.left_y == 127);
+		assert(input.right_x == -128 && input.right_y == -127);
 	}
 }
 
@@ -169,6 +208,10 @@ static void test_subcommand(void)
 	assert(len == 12);
 	assert(report[0] == 0x01);
 	assert(report[1] == 0x00);
+	assert(report[2] == 0x00 && report[3] == 0x01);
+	assert(report[4] == 0x40 && report[5] == 0x40);
+	assert(report[6] == 0x00 && report[7] == 0x01);
+	assert(report[8] == 0x40 && report[9] == 0x40);
 	assert(report[10] == SWITCH_PRO_SUBCMD_REPORT_MODE);
 	assert(report[11] == SWITCH_PRO_REPORT_FULL);
 
@@ -294,6 +337,7 @@ int main(void)
 	test_basic_report_and_first_packet_drop();
 	test_full_button_bits_individually();
 	test_basic_button_bits_individually();
+	test_basic_dpad_and_axis_endianness();
 	test_subcommand();
 	test_diagnostic_leds();
 	test_init_happy_path();
