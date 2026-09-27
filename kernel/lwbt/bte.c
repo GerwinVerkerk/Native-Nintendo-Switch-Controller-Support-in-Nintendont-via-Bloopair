@@ -209,6 +209,19 @@ static s32 __bte_send_pending_request(struct bte_pcb *pcb)
 	return err;
 }
 
+static s32 __bte_notify_connected(struct bte_pcb *pcb)
+{
+	if(pcb == NULL || pcb->conn_notified || pcb->ctl_pcb == NULL ||
+		pcb->data_pcb == NULL || (pcb->require_security && !pcb->security_ready))
+		return ERR_OK;
+	pcb->err = ERR_OK;
+	pcb->state = (u32)STATE_CONNECTED;
+	pcb->conn_notified = 1;
+	if(pcb->conn_cfm != NULL)
+		return pcb->conn_cfm(pcb->cbarg,pcb,ERR_OK);
+	return ERR_OK;
+}
+
 static s32 __bte_send_request(struct ctrl_req_t *req)
 {
 	s32 err;
@@ -473,6 +486,8 @@ s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*con
 	pcb->err = ERR_USE;
 	pcb->data_pcb = NULL;
 	pcb->ctl_pcb = NULL;
+	pcb->security_ready = 0;
+	pcb->conn_notified = 0;
 	pcb->conn_cfm = conn_cfm;
 	pcb->state = (u32)STATE_CONNECTING;
 
@@ -702,6 +717,25 @@ void bte_disconnected(struct bte_pcb *pcb,s32 (disconn_cfm)(void *arg,struct bte
 	pcb->disconn_cfm = disconn_cfm;
 }
 
+void bte_require_security(struct bte_pcb *pcb,u8 required)
+{
+	if(pcb != NULL)
+		pcb->require_security = required ? 1 : 0;
+}
+
+s32 bte_security_complete(struct bte_pcb *pcb,u8 err)
+{
+	if(pcb == NULL)
+		return ERR_VAL;
+	if(err != ERR_OK)
+	{
+		pcb->err = err;
+		return err;
+	}
+	pcb->security_ready = 1;
+	return __bte_notify_connected(pcb);
+}
+
 err_t acl_wlp_completed(void *arg,struct bd_addr *bdaddr)
 {
 	//hci_sniff_mode(bdaddr,200,100,10,10);
@@ -810,9 +844,8 @@ err_t l2cap_accepted(void *arg,struct l2cap_pcb *l2cappcb,err_t err)
 				break;
 		}
 		if(btepcb->data_pcb && btepcb->ctl_pcb) {
-			btepcb->err = ERR_OK;
-			btepcb->state = (u32)STATE_CONNECTED;
-			if(btepcb->conn_cfm) btepcb->conn_cfm(btepcb->cbarg,btepcb,ERR_OK);
+			BTDiagnosticHIDChannelsOpen(&btepcb->bdaddr);
+			__bte_notify_connected(btepcb);
 		}
 	} else {
 		l2cap_close(l2cappcb);

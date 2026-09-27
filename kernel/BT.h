@@ -46,6 +46,7 @@ void BTDiagnosticAuthenticationCommandResult(u8 result);
 void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr);
 void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr);
+void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr);
 
 struct BTPadStat {
 	u32 controller;

@@ -209,6 +209,11 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 	if(result != HCI_SUCCESS)
 	{
 		BTDiagnosticStage = BT_DIAG_AUTH_FAILED;
+		{
+			struct BTPadStat *stat = BTFindSwitchStat(bdaddr);
+			if(stat != NULL)
+				bte_security_complete(stat->sock, ERR_CONN);
+		}
 		return;
 	}
 	BTDiagnosticAuthenticated = 1;
@@ -227,6 +232,9 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	if(result != HCI_SUCCESS || !enabled)
 	{
 		BTDiagnosticStage = BT_DIAG_ENCRYPT_FAILED;
+		stat = BTFindSwitchStat(bdaddr);
+		if(stat != NULL)
+			bte_security_complete(stat->sock, ERR_CONN);
 		return;
 	}
 	BTDiagnosticEncrypted = 1;
@@ -235,10 +243,15 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	if(stat != NULL)
 	{
 		stat->diagnostic_state |= SWITCH_DIAG_ENCRYPTED;
-		if(stat->diagnostic_state & SWITCH_DIAG_HID_OPEN)
-			BTSwitchStartProtocol(stat);
+		bte_security_complete(stat->sock, ERR_OK);
 		sync_after_write(stat, sizeof(struct BTPadStat));
 	}
+}
+
+void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr)
+{
+	BTDiagnosticPairingPhase(BT_DIAG_HID_OPEN, bdaddr);
+	BTDiagnosticAdvanceSecurity();
 }
 
 static void BTSwitchSendSubcommand(struct BTPadStat *stat, u8 command,
@@ -858,8 +871,6 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 	//wiimote extensions need some extra stuff first, start with getting its status
 	if(stat->transfertype == TRANSFER_SWITCH_PRO)
 	{
-		BTDiagnosticPairingPhase(BT_DIAG_HID_OPEN, &stat->bdaddr);
-		BTDiagnosticAdvanceSecurity();
 		SwitchProReset(&stat->switch_state);
 		stat->transferstate = TRANSFER_DONE;
 		/* Only claim a player slot after a valid Switch input report arrives. */
@@ -946,6 +957,8 @@ static int RegisterBTPad(struct BTPadStat *stat, struct bd_addr *_bdaddr)
 	bte_arg(stat->sock, stat);
 	bte_received(stat->sock, BTHandleData);
 	bte_disconnected(stat->sock, BTHandleDisconnect);
+	bte_require_security(stat->sock,
+		stat->transfertype == TRANSFER_SWITCH_PRO ? 1 : 0);
 
 	bte_registerdeviceasync(stat->sock, _bdaddr, BTHandleConnect);
 	sync_after_write(stat, sizeof(struct BTPadStat));

@@ -89,7 +89,7 @@ player LED while the diagnostic is active.
 | LED 1 solid | 1. Found | Inquiry returned a device with the original Switch Pro class of device `0x002508`; its Bluetooth address became the diagnostic target. |
 | LEDs 1-2 solid | 2. SSP | A successful HCI Simple Pairing Complete event was received for that same address. |
 | LEDs 1-3 solid | 3. Link key | A Link Key Notification for that address was received and the Wii U Bluetooth controller returned success for Write Stored Link Key. |
-| LEDs 1-4 solid | 4. HID | Both HID L2CAP channels opened and Nintendont invoked the Switch Pro connection callback. |
+| LEDs 1-4 solid | 4. HID transport | Both HID L2CAP channels opened. For Switch Pro, the connection callback remains gated until authentication and encryption succeed. |
 | LEDs 1+4 solid | Authentication requested | The Bluetooth controller accepted the HCI Authentication Requested command, but Authentication Complete has not succeeded yet. |
 | LEDs 1+3 and 2+4 alternate | 5. Authenticated | HCI Authentication Complete succeeded for the target controller. |
 | All four LEDs blink slowly | 6. Encrypted | HCI Encryption Change reported that link encryption is enabled. Only then does this build start HID protocol initialization. |
@@ -169,6 +169,13 @@ Observed on Wii U hardware:
   and answers a matching HCI Link Key Request with the fresh SSP key instead of
   unconditionally sending a negative reply. That change is not yet validated
   on Wii U hardware.
+
+The next architecture step gates the Switch Pro connection callback behind
+successful authentication and encryption. Existing Wii Remote and Wii U Pro
+connections retain their original behavior. This prevents Switch protocol
+commands from being sent merely because both L2CAP channels exist; the
+application sees the controller only after the secured HID transport is ready.
+This security gate is compile-tested but not yet hardware-validated.
 
 Still requires Wii U hardware:
 

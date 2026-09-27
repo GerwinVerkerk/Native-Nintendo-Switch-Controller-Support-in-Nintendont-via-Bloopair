@@ -107,6 +107,9 @@ struct bte_pcb
 
 	struct l2cap_pcb *ctl_pcb;
 	struct l2cap_pcb *data_pcb;
+	u8 require_security;
+	u8 security_ready;
+	u8 conn_notified;
 
 
 	s32 (*recv)(void *arg,void *buffer,u16 len);
@@ -130,6 +133,8 @@ struct bte_pcb* bte_new();
 void bte_arg(struct bte_pcb *pcb,void *arg);
 void bte_received(struct bte_pcb *pcb, s32 (*recv)(void *arg,void *buffer,u16 len));
 void bte_disconnected(struct bte_pcb *pcb,s32 (disconn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
+void bte_require_security(struct bte_pcb *pcb,u8 required);
+s32 bte_security_complete(struct bte_pcb *pcb,u8 err);
 
 s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*conn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
 
