@@ -50,6 +50,8 @@
 #include "physbusif.h"
 #include "../BT.h"
 
+extern int dbgprintf(const char *fmt, ...);
+
 struct hci_pcb *hci_dev = NULL;
 struct hci_link *hci_active_links = NULL;
 struct hci_link *hci_tmp_link = NULL;
@@ -1797,6 +1799,8 @@ void hci_event_handler(struct pbuf *p)
 			hci_user_confirmation_request_reply(bdaddr);
 			break;
 		case HCI_SIMPLE_PAIRING_COMPLETE:
+			dbgprintf("[SWTRACE] SSP complete_status=%u\r\n",
+				((u8_t*)p->payload)[0]);
 			if(((u8_t*)p->payload)[0] == HCI_SUCCESS)
 				BTDiagnosticPairingPhase(BT_DIAG_SSP_COMPLETE,
 					(struct bd_addr*)(((u8_t*)p->payload) + 1));

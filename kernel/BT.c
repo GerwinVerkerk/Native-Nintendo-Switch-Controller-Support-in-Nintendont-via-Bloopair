@@ -53,6 +53,11 @@ static u8 BTDiagnosticAuthenticated = 0;
 static u8 BTDiagnosticEncrypted = 0;
 static u8 BTDiagnosticBlinkOn = 1;
 static u32 BTDiagnosticBlinkTimer = 0;
+static u32 BTTraceRxLogged = 0;
+static u32 BTTraceCommandReports = 0;
+static u32 BTTraceFullReports = 0;
+static u32 BTTraceBasicReports = 0;
+static u32 BTTraceStreamingReports = 0;
 
 static struct BTPadCont *BTPad = (struct BTPadCont*)0x132F0000;
 
@@ -136,6 +141,12 @@ static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 	BTDiagnosticAuthRequested = 0;
 	BTDiagnosticBlinkOn = 1;
 	BTDiagnosticBlinkTimer = read32(HW_TIMER);
+	BTTraceRxLogged = 0;
+	BTTraceCommandReports = 0;
+	BTTraceFullReports = 0;
+	BTTraceBasicReports = 0;
+	BTTraceStreamingReports = 0;
+	dbgprintf("[SWTRACE] START found=1\r\n");
 }
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr)
@@ -145,7 +156,10 @@ void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr)
 		return;
 	/* Keep the display cumulative: a later stage only proves its predecessor. */
 	if(phase == BTDiagnosticStage + 1)
+	{
 		BTDiagnosticStage = phase;
+		dbgprintf("[SWTRACE] PHASE value=%u\r\n", phase);
+	}
 }
 
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr)
@@ -154,6 +168,7 @@ void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr)
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr, sizeof(BTDiagnosticTarget.addr)) != 0)
 		return;
 	BTDiagnosticStorePending = 1;
+	dbgprintf("[SWTRACE] LINK_KEY store_queued=1\r\n");
 }
 
 void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
@@ -164,6 +179,7 @@ void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
 		return;
 	memcpy(BTDiagnosticLinkKey, key, sizeof(BTDiagnosticLinkKey));
 	BTDiagnosticLinkKeyValid = 1;
+	dbgprintf("[SWTRACE] LINK_KEY notification=1 cached=1\r\n");
 }
 
 u8 BTDiagnosticGetLinkKey(const struct bd_addr *bdaddr, u8 *key)
@@ -171,8 +187,12 @@ u8 BTDiagnosticGetLinkKey(const struct bd_addr *bdaddr, u8 *key)
 	if(!BTDiagnosticTargetSet || !BTDiagnosticLinkKeyValid || bdaddr == NULL ||
 		key == NULL || memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
 			sizeof(BTDiagnosticTarget.addr)) != 0)
+	{
+		dbgprintf("[SWTRACE] LINK_KEY request_reply=miss\r\n");
 		return 0;
+	}
 	memcpy(key, BTDiagnosticLinkKey, sizeof(BTDiagnosticLinkKey));
+	dbgprintf("[SWTRACE] LINK_KEY request_reply=hit\r\n");
 	return 1;
 }
 
@@ -181,6 +201,7 @@ void BTDiagnosticLinkKeyStoreResult(u8 result)
 	if(!BTDiagnosticStorePending)
 		return;
 	BTDiagnosticStorePending = 0;
+	dbgprintf("[SWTRACE] LINK_KEY store_result=%u\r\n", result);
 	if(result == HCI_SUCCESS && BTDiagnosticStage == BT_DIAG_SSP_COMPLETE)
 	{
 		BTDiagnosticStage = BT_DIAG_LINK_KEY_STORED;
@@ -194,6 +215,7 @@ void BTDiagnosticAuthenticationCommandResult(u8 result)
 {
 	if(!BTDiagnosticTargetSet)
 		return;
+	dbgprintf("[SWTRACE] AUTH command_status=%u\r\n", result);
 	if(result == HCI_SUCCESS)
 		BTDiagnosticAuthRequested = 1;
 	else
@@ -206,6 +228,7 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
 			sizeof(BTDiagnosticTarget.addr)) != 0)
 		return;
+	dbgprintf("[SWTRACE] AUTH complete_status=%u\r\n", result);
 	if(result != HCI_SUCCESS)
 	{
 		BTDiagnosticStage = BT_DIAG_AUTH_FAILED;
@@ -229,6 +252,7 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
 			sizeof(BTDiagnosticTarget.addr)) != 0)
 		return;
+	dbgprintf("[SWTRACE] ENCRYPT status=%u enabled=%u\r\n", result, enabled);
 	if(result != HCI_SUCCESS || !enabled)
 	{
 		BTDiagnosticStage = BT_DIAG_ENCRYPT_FAILED;
@@ -250,6 +274,7 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr)
 {
+	dbgprintf("[SWTRACE] HID channels_open=1\r\n");
 	BTDiagnosticPairingPhase(BT_DIAG_HID_OPEN, bdaddr);
 	BTDiagnosticAdvanceSecurity();
 }
@@ -261,7 +286,11 @@ static void BTSwitchSendSubcommand(struct BTPadStat *stat, u8 command,
 	u16 len = SwitchProBuildSubcommand(&stat->switch_state, report,
 		sizeof(report), command, data, data_len);
 	if(len)
+	{
+		dbgprintf("[SWTRACE] HID_TX report=01 subcmd=%02x len=%u seq=%u\r\n",
+			command, len, report[1]);
 		bte_senddata(stat->sock, report, len);
+	}
 }
 
 static s32 BTSwitchProtocolReady(void *arg,struct bte_pcb *pcb,u8 err)
@@ -269,6 +298,7 @@ static s32 BTSwitchProtocolReady(void *arg,struct bte_pcb *pcb,u8 err)
 	struct BTPadStat *stat = (struct BTPadStat*)arg;
 	u8 mode = SWITCH_PRO_REPORT_FULL;
 
+	dbgprintf("[SWTRACE] SET_PROTOCOL callback_err=%u\r\n", err);
 	if(err != ERR_OK)
 		return ERR_OK;
 	BTDiagnosticPairingPhase(BT_DIAG_PROTOCOL_READY, &stat->bdaddr);
@@ -283,17 +313,50 @@ static void BTSwitchStartProtocol(struct BTPadStat *stat)
 		(SWITCH_DIAG_HID_OPEN | SWITCH_DIAG_ENCRYPTED))
 		return;
 	stat->diagnostic_state |= SWITCH_DIAG_PROTOCOL_STARTED;
-	bte_setprotocolasync(stat->sock, HIDP_PROTO_REPORT, BTSwitchProtocolReady);
+	dbgprintf("[SWTRACE] SET_PROTOCOL send=report\r\n");
+	{
+		s32 result = bte_setprotocolasync(stat->sock, HIDP_PROTO_REPORT,
+			BTSwitchProtocolReady);
+		dbgprintf("[SWTRACE] SET_PROTOCOL queue_result=%d\r\n", result);
+	}
 }
 
 static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 {
 	struct SwitchProInput input;
 	u32 chan = stat->channel;
+	u8 report_id = len ? ((u8*)buffer)[0] : 0;
+
+	if(report_id == SWITCH_PRO_REPORT_COMMAND)
+		BTTraceCommandReports++;
+	else if(report_id == SWITCH_PRO_REPORT_FULL)
+		BTTraceFullReports++;
+	else if(report_id == SWITCH_PRO_REPORT_BASIC)
+		BTTraceBasicReports++;
+	if(BTTraceRxLogged < 24)
+	{
+		dbgprintf("[SWTRACE] REPORT n=%u id=%02x len=%u c21=%u f30=%u b3f=%u\r\n",
+			BTTraceRxLogged + 1, report_id, len, BTTraceCommandReports,
+			BTTraceFullReports, BTTraceBasicReports);
+		BTTraceRxLogged++;
+	}
 
 	if(SwitchProParseReport(&stat->switch_state, (const u8*)buffer, len, &input))
 	{
-		BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
+		/* A command reply (0x21) carries button fields too, but it does not
+		 * prove that continuous input streaming is active. Require three
+		 * real 0x30/0x3f reports before publishing the input phase. */
+		if(report_id == SWITCH_PRO_REPORT_FULL ||
+			report_id == SWITCH_PRO_REPORT_BASIC)
+		{
+			BTTraceStreamingReports++;
+			if(BTTraceStreamingReports == 3)
+			{
+				dbgprintf("[SWTRACE] INPUT streaming=1 reports=%u\r\n",
+					BTTraceStreamingReports);
+				BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
+			}
+		}
 		if(!(stat->controller & C_SWITCH_PRO))
 		{
 			stat->controller = C_CCP | C_SWITCH_PRO;
@@ -319,6 +382,8 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 		(((u8*)buffer)[13] & 0x80))
 	{
 		u8 command = ((u8*)buffer)[14];
+		dbgprintf("[SWTRACE] SUBCMD_ACK ack=%02x subcmd=%02x\r\n",
+			((u8*)buffer)[13], command);
 		if(command == SWITCH_PRO_SUBCMD_DEVICE_INFO)
 		{
 			u8 mode = SWITCH_PRO_REPORT_FULL;
@@ -871,6 +936,8 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 	//wiimote extensions need some extra stuff first, start with getting its status
 	if(stat->transfertype == TRANSFER_SWITCH_PRO)
 	{
+		dbgprintf("[SWTRACE] APP_CONNECT err=%u encrypted=%u\r\n",
+			err, BTDiagnosticEncrypted);
 		SwitchProReset(&stat->switch_state);
 		stat->transferstate = TRANSFER_DONE;
 		/* Only claim a player slot after a valid Switch input report arrives. */

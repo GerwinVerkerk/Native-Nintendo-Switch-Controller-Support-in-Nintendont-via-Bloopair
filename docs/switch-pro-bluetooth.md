@@ -94,7 +94,7 @@ player LED while the diagnostic is active.
 | LEDs 1+3 and 2+4 alternate | 5. Authenticated | HCI Authentication Complete succeeded for the target controller. |
 | All four LEDs blink slowly | 6. Encrypted | HCI Encryption Change reported that link encryption is enabled. Only then does this build start HID protocol initialization. |
 | All four LEDs blink at medium speed | 7. Protocol | The controller acknowledged HID Set Protocol (Report); Nintendont then requested full `0x30` reports. |
-| All four LEDs blink quickly | 8. Input | At least one valid Switch Pro `0x30`, `0x21` or `0x3f` input report was parsed. |
+| All four LEDs blink quickly | 8. Input | At least three continuous Switch Pro `0x30` or `0x3f` input reports were parsed. A `0x21` subcommand response no longer counts as streaming input. |
 | LEDs 1+4 and 2+3 alternate | Authentication failed | HCI Authentication Complete returned a failure status. This is an error pattern, not a completed phase. |
 | LEDs 1+2 and 3+4 alternate | Encryption failed | HCI Encryption Change failed or reported encryption disabled. This is an error pattern, not a completed phase. |
 
@@ -118,6 +118,20 @@ Installation and launch:
 
 Rollback: restore the backed-up `boot.dol`. A successful pairing may replace
 the Switch Pro link key, in which case Bloopair may need to pair it again.
+
+### SD event trace
+
+Enable **Log** in Nintendont's settings before launching the game. The in-game
+kernel then appends a bounded Bluetooth trace to `sd:/ndebug.log`. Trace lines
+use the `[SWTRACE]` prefix and record security status codes, HID channel state,
+Set Protocol, Switch subcommand TX/ACK state, and the first 24 HID reports.
+Bluetooth addresses and link-key bytes are deliberately not logged.
+
+For one diagnostic run, start the game directly from Nintendont, hold the
+controller's small SYNC button for several seconds during loading, wait 30
+seconds, then exit and retrieve `sd:/ndebug.log`. The trace distinguishes
+`0x21` subcommand replies from continuous `0x30` and fallback `0x3f` input, so
+LED speed is no longer the primary diagnostic signal.
 
 Record pass/fail and any LED behavior for every step:
 
@@ -169,6 +183,13 @@ Observed on Wii U hardware:
   and answers a matching HCI Link Key Request with the fresh SSP key instead of
   unconditionally sending a negative reply. That change is not yet validated
   on Wii U hardware.
+- Build `5872890` reached authenticated and encrypted HID transport, received a
+  Set Protocol acknowledgement and at least one Switch report. Its fast LED
+  diagnostic was a false positive for input because a `0x21` subcommand reply
+  was accepted by the shared report parser. The Switch Pro player LEDs still
+  swept and Double Dash received no input. The trace build separates `0x21`,
+  `0x30`, and `0x3f`, and only reports streaming input after three real
+  `0x30`/`0x3f` reports.
 
 The next architecture step gates the Switch Pro connection callback behind
 successful authentication and encryption. Existing Wii Remote and Wii U Pro
