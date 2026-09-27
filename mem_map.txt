@@ -73,6 +73,8 @@ MEM2
 0x932C0494-0x932C0498=SensorBarPosition
 0x932C0498-0x932C049C=AspectRatio
 0x932F0000-0x932F008F=BTPad
+0x932F0100-0x932F01BF=Switch Pro ARM trace buffer
+0x932F0200-0x932F023F=Switch Pro PPC trace/ack buffer
 
 Hardware Registers
 0x0D80600C=EXI Command/Loop

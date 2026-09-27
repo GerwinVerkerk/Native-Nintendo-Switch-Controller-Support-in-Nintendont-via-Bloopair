@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "lwbt/physbusif.h"
 #include "Config.h"
 #include "SwitchPro.h"
+#include "../common/include/SwitchProDiag.h"
 
 extern int dbgprintf( const char *fmt, ...);
 
@@ -57,6 +58,10 @@ static volatile u32 BTDiagnosticSwitchButtons = 0;
 static volatile u32 BTDiagnosticSwitchChannel = 4;
 
 static struct BTPadCont *BTPad = (struct BTPadCont*)0x132F0000;
+static struct SwitchProArmDiag *SwitchArmDiag =
+	(struct SwitchProArmDiag*)SWITCH_PRO_DIAG_ARM_ADDR;
+static struct SwitchProPpcDiag *SwitchPpcDiag =
+	(struct SwitchProPpcDiag*)SWITCH_PRO_DIAG_PPC_ADDR;
 
 static vu32* BTMotor = (u32*)0x13003040;
 static vu32* BTPadFree = (u32*)0x13003050;
@@ -317,6 +322,7 @@ static void BTSwitchUpdateProtocol(struct BTPadStat *stat)
 {
 	u16 delay_ms = SwitchProInitDelayMs(&stat->switch_state);
 	u8 action;
+	u8 data[5];
 	/* All four LEDs identify the provisional, not-yet-assigned state.  The
 	 * main loop replaces this with exactly one LED only after PADReadGC has
 	 * exposed a real free GameCube channel. */
@@ -332,31 +338,68 @@ static void BTSwitchUpdateProtocol(struct BTPadStat *stat)
 		BTSwitchSendSubcommand(stat, SWITCH_PRO_SUBCMD_DEVICE_INFO, NULL, 0);
 	else if(action == SWITCH_PRO_INIT_ACTION_PLAYER_LED)
 		BTSwitchSendSubcommand(stat, SWITCH_PRO_SUBCMD_PLAYER_LED, &led, 1);
+	else if(action == SWITCH_PRO_INIT_ACTION_VIBRATION)
+	{
+		data[0] = 1;
+		BTSwitchSendSubcommand(stat, SWITCH_PRO_SUBCMD_VIBRATION, data, 1);
+	}
+	else if(action == SWITCH_PRO_INIT_ACTION_USER_CAL ||
+		action == SWITCH_PRO_INIT_ACTION_FACTORY_CAL)
+	{
+		u32 address = action == SWITCH_PRO_INIT_ACTION_USER_CAL ?
+			SWITCH_PRO_USER_CAL_ADDR : SWITCH_PRO_FACTORY_CAL_ADDR;
+		data[0] = address & 0xFF;
+		data[1] = (address >> 8) & 0xFF;
+		data[2] = (address >> 16) & 0xFF;
+		data[3] = (address >> 24) & 0xFF;
+		data[4] = action == SWITCH_PRO_INIT_ACTION_USER_CAL ? 22 : 18;
+		BTSwitchSendSubcommand(stat, SWITCH_PRO_SUBCMD_SPI_READ, data, 5);
+	}
+	else if(action == SWITCH_PRO_INIT_ACTION_REPORT_MODE)
+	{
+		data[0] = SWITCH_PRO_REPORT_FULL;
+		BTSwitchSendSubcommand(stat, SWITCH_PRO_SUBCMD_REPORT_MODE, data, 1);
+	}
 	sync_after_write(stat, sizeof(struct BTPadStat));
 }
 
 static void BTSwitchPublishInput(struct BTPadStat *stat)
 {
 	u32 chan = stat->channel;
+	u32 buttons;
 	if(!stat->switch_input_valid || chan == CHAN_NOT_SET ||
 		stat->controller == C_NOT_SET)
 		return;
+	buttons = stat->switch_selftest_state == 1 ? SWITCH_PRO_BTN_A :
+		stat->switch_input.buttons;
 
 	sync_before_read(&BTPad[chan], sizeof(struct BTPadCont));
 	BTPad[chan].xAxisL = stat->switch_input.left_x;
 	BTPad[chan].yAxisL = stat->switch_input.left_y;
 	BTPad[chan].xAxisR = stat->switch_input.right_x;
 	BTPad[chan].yAxisR = stat->switch_input.right_y;
-	BTPad[chan].button = stat->switch_input.buttons;
+	BTPad[chan].button = buttons;
 	BTPad[chan].triggerL = 0;
 	BTPad[chan].triggerR = 0;
-	BTPad[chan].used = stat->controller;
+	/* The Switch-specific type remains private to the ARM state machine.
+	 * PPC consumes the already-supported Classic Controller Pro contract. */
+	BTPad[chan].used = C_CCP;
 	sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
-	BTDiagnosticSwitchButtons = stat->switch_input.buttons;
+	BTDiagnosticSwitchButtons = buttons;
 	BTDiagnosticSwitchChannel = chan;
 	if(BTDiagnosticStage < BT_DIAG_INPUT_RECEIVED)
 		BTDiagnosticPairingPhase(BT_DIAG_INPUT_RECEIVED, &stat->bdaddr);
 	stat->switch_publish_count++;
+	SwitchArmDiag->publish_sequence++;
+	SwitchArmDiag->publish_channel = chan;
+	SwitchArmDiag->publish_used = C_CCP;
+	SwitchArmDiag->publish_buttons = buttons;
+	SwitchArmDiag->publish_left_x = stat->switch_input.left_x;
+	SwitchArmDiag->publish_left_y = stat->switch_input.left_y;
+	SwitchArmDiag->publish_right_x = stat->switch_input.right_x;
+	SwitchArmDiag->publish_right_y = stat->switch_input.right_y;
+	SwitchArmDiag->selftest_state = stat->switch_selftest_state;
+	sync_after_write(SwitchArmDiag, sizeof(struct SwitchProArmDiag));
 }
 
 static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
@@ -368,6 +411,25 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 		(const u8*)buffer, len, &input);
 	u8 stream_ready = SwitchProTrackStreamReport(&stat->switch_state,
 		report_id, parsed);
+	{
+		u32 sequence = ++SwitchArmDiag->report_sequence;
+		struct SwitchProDiagReport *entry =
+			&SwitchArmDiag->reports[(sequence - 1) % SWITCH_PRO_DIAG_REPORTS];
+		u32 copy_len = len < sizeof(entry->raw) ? len : sizeof(entry->raw);
+		memset(entry, 0, sizeof(*entry));
+		entry->sequence = sequence;
+		entry->report_id_len = ((u32)report_id << 16) | len;
+		if(parsed)
+		{
+			entry->buttons = input.buttons;
+			entry->left_x = input.left_x;
+			entry->left_y = input.left_y;
+			entry->right_x = input.right_x;
+			entry->right_y = input.right_y;
+		}
+		memcpy(entry->raw, buffer, copy_len);
+		sync_after_write(SwitchArmDiag, sizeof(struct SwitchProArmDiag));
+	}
 
 	if(parsed && (report_id == SWITCH_PRO_REPORT_FULL ||
 		report_id == SWITCH_PRO_REPORT_BASIC))
@@ -391,8 +453,10 @@ static s32 BTHandleSwitchProData(struct BTPadStat *stat, void *buffer, u16 len)
 	{
 		u8 ack = ((u8*)buffer)[13];
 		u8 command = ((u8*)buffer)[14];
-		u8 ack_result = SwitchProInitHandleAck(&stat->switch_state,
-			ack, command);
+		const u8 *response_data = len > 15 ? &((u8*)buffer)[15] : NULL;
+		u16 response_len = len > 15 ? len - 15 : 0;
+		u8 ack_result = SwitchProInitHandleResponse(&stat->switch_state,
+			ack, command, response_data, response_len);
 		if(ack_result == SWITCH_PRO_ACK_ACCEPTED ||
 			ack_result == SWITCH_PRO_ACK_NEGATIVE)
 			stat->switch_init_timer = read32(HW_TIMER);
@@ -1182,6 +1246,12 @@ void BTInit(void)
 	BTDiagnosticBlinkTimer = read32(HW_TIMER);
 	BTDiagnosticSwitchButtons = 0;
 	BTDiagnosticSwitchChannel = CHAN_NOT_SET;
+	memset(SwitchArmDiag, 0, sizeof(struct SwitchProArmDiag));
+	SwitchArmDiag->magic = SWITCH_PRO_DIAG_MAGIC;
+	SwitchArmDiag->version = SWITCH_PRO_DIAG_VERSION;
+	sync_after_write(SwitchArmDiag, sizeof(struct SwitchProArmDiag));
+	memset(SwitchPpcDiag, 0, sizeof(struct SwitchProPpcDiag));
+	sync_after_write(SwitchPpcDiag, sizeof(struct SwitchProPpcDiag));
 	memset(BTKeys, 0, sizeof(struct linkkey_info) * CONF_PAD_MAX_REGISTERED);
 
 	memset(BTPad, 0, sizeof(struct BTPadCont)*4);
@@ -1221,6 +1291,11 @@ void BTUpdateRegisters(void)
 		__readbulkdataCB();
 		__issue_bulkread();
 	}
+	sync_before_read(SwitchPpcDiag, sizeof(struct SwitchProPpcDiag));
+	if(SwitchPpcDiag->magic == SWITCH_PRO_DIAG_MAGIC &&
+		SwitchPpcDiag->selftest_a_seen &&
+		BTDiagnosticStage >= BT_DIAG_INPUT_RECEIVED)
+		BTDiagnosticStage = BT_DIAG_PPC_SELFTEST;
 	if(((BTDiagnosticStage == BT_DIAG_AUTHENTICATED ||
 		BTDiagnosticStage == BT_DIAG_ENCRYPTED) &&
 		TimerDiffTicks(BTDiagnosticBlinkTimer) > 949220) ||
@@ -1307,6 +1382,13 @@ void BTUpdateRegisters(void)
 			/* The stream may go quiet immediately after the three reports that
 			 * made it ready. Publish the cached latest state as soon as PADReadGC
 			 * assigns a real channel, rather than waiting for another packet. */
+			if(BTPadConnected[i]->switch_selftest_state == 0)
+			{
+				/* Decisive ARM->PPC boundary check: pulse GameCube A for half a
+				 * second once, then return permanently to live controller data. */
+				BTPadConnected[i]->switch_selftest_state = 1;
+				BTPadConnected[i]->switch_selftest_timer = read32(HW_TIMER);
+			}
 			BTSwitchPublishInput(BTPadConnected[i]);
 			if(BTPadConnected[i]->switch_led_channel != CurChan)
 			{
@@ -1316,6 +1398,18 @@ void BTUpdateRegisters(void)
 				BTPadConnected[i]->switch_led_channel = CurChan;
 				sync_after_write(BTPadConnected[i],
 					sizeof(struct BTPadStat));
+			}
+		}
+		if(BTPadConnected[i]->transfertype == TRANSFER_SWITCH_PRO &&
+			BTPadConnected[i]->switch_selftest_state == 1)
+		{
+			if(TimerDiffTicks(BTPadConnected[i]->switch_selftest_timer) < 949220)
+				BTSwitchPublishInput(BTPadConnected[i]);
+			else
+			{
+				BTPadConnected[i]->switch_selftest_state = 2;
+				BTSwitchPublishInput(BTPadConnected[i]);
+				sync_after_write(BTPadConnected[i], sizeof(struct BTPadStat));
 			}
 		}
 		if(BTPadConnected[i]->transfertype == TRANSFER_SWITCH_PRO)

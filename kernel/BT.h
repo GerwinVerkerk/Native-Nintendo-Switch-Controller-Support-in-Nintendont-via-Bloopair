@@ -36,6 +36,7 @@ void BTUpdateRegisters(void);
 #define BT_DIAG_AUTH_FAILED       9
 #define BT_DIAG_ENCRYPT_FAILED   10
 #define BT_DIAG_AUTH_REQUESTED   11
+#define BT_DIAG_PPC_SELFTEST     12
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
@@ -71,6 +72,8 @@ struct BTPadStat {
 	u32 switch_input_reports;
 	u32 switch_publish_count;
 	u32 switch_led_channel;
+	u32 switch_selftest_state;
+	u32 switch_selftest_timer;
 } ALIGNED(32);
 
 struct BTPadCont {
@@ -86,6 +89,9 @@ struct BTPadCont {
 	s16 yAccel;
 	s16 zAccel;
 } ALIGNED(32);
+
+typedef char BTPadContSizeCheck[(sizeof(struct BTPadCont) == 32) ? 1 : -1];
+typedef char BTPadContButtonOffsetCheck[(__builtin_offsetof(struct BTPadCont, button) == 12) ? 1 : -1];
 
 #define BT_DPAD_UP              0x0001
 #define BT_DPAD_LEFT            0x0002

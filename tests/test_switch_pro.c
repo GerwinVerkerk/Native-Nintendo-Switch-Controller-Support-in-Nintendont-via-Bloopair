@@ -243,12 +243,17 @@ static void test_diagnostic_leds(void)
 	assert(SwitchProDiagnosticLED(10, 1) == 0x30);
 	assert(SwitchProDiagnosticLED(11, 0) == 0x90);
 	assert(SwitchProDiagnosticLED(11, 1) == 0x90);
+	assert(SwitchProDiagnosticLED(12, 0) == 0x60);
+	assert(SwitchProDiagnosticLED(12, 1) == 0x60);
 }
 
 static void test_init_happy_path(void)
 {
 	struct SwitchProState state;
 	u8 action;
+	u8 device_info[3] = {0, 0, 3};
+	u8 user_cal[27];
+	u8 factory_cal[23];
 
 	SwitchProReset(&state);
 	SwitchProInitStart(&state);
@@ -261,19 +266,48 @@ static void test_init_happy_path(void)
 	assert(SwitchProInitDelayMs(&state) == 100);
 
 	/* An unrelated acknowledgement must not advance the state. */
-	assert(SwitchProInitHandleAck(&state, 0x80,
-		SWITCH_PRO_SUBCMD_PLAYER_LED) == SWITCH_PRO_ACK_IGNORED);
+	assert(SwitchProInitHandleResponse(&state, 0x80,
+		SWITCH_PRO_SUBCMD_PLAYER_LED, NULL, 0) == SWITCH_PRO_ACK_IGNORED);
 	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
 
-	assert(SwitchProInitHandleAck(&state, 0x82,
-		SWITCH_PRO_SUBCMD_DEVICE_INFO) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(SwitchProInitHandleResponse(&state, 0x82,
+		SWITCH_PRO_SUBCMD_DEVICE_INFO, device_info,
+		sizeof(device_info)) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(state.device_type == 3);
 	assert(state.init_state == SWITCH_PRO_INIT_DEVICE_INFO_ACKED);
 	assert(SwitchProInitDelayMs(&state) == 60);
 	action = SwitchProInitPoll(&state);
 	assert(action == SWITCH_PRO_INIT_ACTION_PLAYER_LED);
 	assert(state.init_state == SWITCH_PRO_INIT_WAIT_PLAYER_LED);
-	assert(SwitchProInitHandleAck(&state, 0x80,
-		SWITCH_PRO_SUBCMD_PLAYER_LED) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(SwitchProInitHandleResponse(&state, 0x80,
+		SWITCH_PRO_SUBCMD_PLAYER_LED, NULL, 0) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(state.init_state == SWITCH_PRO_INIT_PLAYER_LED_ACKED);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_VIBRATION);
+	assert(SwitchProInitHandleResponse(&state, 0x80,
+		SWITCH_PRO_SUBCMD_VIBRATION, NULL, 0) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_USER_CAL);
+
+	/* No valid user calibration: proceed to the factory block. */
+	memset(user_cal, 0, sizeof(user_cal));
+	user_cal[0] = 0x10; user_cal[1] = 0x80;
+	user_cal[4] = 22;
+	assert(SwitchProInitHandleResponse(&state, 0x90,
+		SWITCH_PRO_SUBCMD_SPI_READ, user_cal,
+		sizeof(user_cal)) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(!state.left_calibrated && !state.right_calibrated);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_FACTORY_CAL);
+
+	memset(factory_cal, 0, sizeof(factory_cal));
+	factory_cal[0] = 0x3D; factory_cal[1] = 0x60;
+	factory_cal[4] = 18;
+	/* All-zero calibration is syntactically valid and exercises parsing. */
+	assert(SwitchProInitHandleResponse(&state, 0x90,
+		SWITCH_PRO_SUBCMD_SPI_READ, factory_cal,
+		sizeof(factory_cal)) == SWITCH_PRO_ACK_ACCEPTED);
+	assert(state.left_calibrated && state.right_calibrated);
+	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_REPORT_MODE);
+	assert(SwitchProInitHandleResponse(&state, 0x80,
+		SWITCH_PRO_SUBCMD_REPORT_MODE, NULL, 0) == SWITCH_PRO_ACK_ACCEPTED);
 	assert(state.init_state == SWITCH_PRO_INIT_READY);
 	assert(SwitchProInitDelayMs(&state) == 0);
 	assert(SwitchProInitPoll(&state) == SWITCH_PRO_INIT_ACTION_NONE);
@@ -288,8 +322,8 @@ static void test_init_retry_timeout_and_negative_ack(void)
 	SwitchProInitStart(&state);
 	assert(SwitchProInitPoll(&state) ==
 		SWITCH_PRO_INIT_ACTION_DEVICE_INFO);
-	assert(SwitchProInitHandleAck(&state, 0x00,
-		SWITCH_PRO_SUBCMD_DEVICE_INFO) == SWITCH_PRO_ACK_NEGATIVE);
+	assert(SwitchProInitHandleResponse(&state, 0x00,
+		SWITCH_PRO_SUBCMD_DEVICE_INFO, NULL, 0) == SWITCH_PRO_ACK_NEGATIVE);
 	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
 
 	for(i = 1; i < SWITCH_PRO_INIT_RETRY_MAX; i++)

@@ -32,6 +32,12 @@ static u16 read_le16(const u8 *data)
 	return data[0] | ((u16)data[1] << 8);
 }
 
+static u32 read_le32(const u8 *data)
+{
+	return data[0] | ((u32)data[1] << 8) | ((u32)data[2] << 16) |
+		((u32)data[3] << 24);
+}
+
 static u16 switch_axis_x(const u8 *data)
 {
 	return data[0] | ((data[1] & 0x0F) << 8);
@@ -42,17 +48,55 @@ static u16 switch_axis_y(const u8 *data)
 	return (data[1] >> 4) | (data[2] << 4);
 }
 
-static void parse_full(const u8 *report, struct SwitchProInput *input)
+static s16 calibrate_axis(u16 raw, u16 center, u16 minimum, u16 maximum)
+{
+	s32 value;
+	s32 range;
+	if(raw >= center)
+	{
+		range = maximum > center ? maximum - center : 1;
+		value = ((s32)raw - center) * 127 / range;
+	}
+	else
+	{
+		range = center > minimum ? center - minimum : 1;
+		value = -((s32)center - raw) * 128 / range;
+	}
+	return clamp_axis(value);
+}
+
+static void parse_full(const struct SwitchProState *state, const u8 *report,
+	struct SwitchProInput *input)
 {
 	u8 right = report[3];
 	u8 shared = report[4];
 	u8 left = report[5];
 	u32 buttons = 0;
 
-	input->left_x = clamp_axis(((s32)switch_axis_x(&report[6]) - 0x800) >> 4);
-	input->left_y = clamp_axis(-(((s32)switch_axis_y(&report[6]) - 0x800) >> 4));
-	input->right_x = clamp_axis(((s32)switch_axis_x(&report[9]) - 0x800) >> 4);
-	input->right_y = clamp_axis(-(((s32)switch_axis_y(&report[9]) - 0x800) >> 4));
+	if(state != 0 && state->left_calibrated)
+	{
+		input->left_x = calibrate_axis(switch_axis_x(&report[6]),
+			state->left_center_x, state->left_min_x, state->left_max_x);
+		input->left_y = -calibrate_axis(switch_axis_y(&report[6]),
+			state->left_center_y, state->left_min_y, state->left_max_y);
+	}
+	else
+	{
+		input->left_x = clamp_axis(((s32)switch_axis_x(&report[6]) - 0x800) >> 4);
+		input->left_y = clamp_axis(-(((s32)switch_axis_y(&report[6]) - 0x800) >> 4));
+	}
+	if(state != 0 && state->right_calibrated)
+	{
+		input->right_x = calibrate_axis(switch_axis_x(&report[9]),
+			state->right_center_x, state->right_min_x, state->right_max_x);
+		input->right_y = -calibrate_axis(switch_axis_y(&report[9]),
+			state->right_center_y, state->right_min_y, state->right_max_y);
+	}
+	else
+	{
+		input->right_x = clamp_axis(((s32)switch_axis_x(&report[9]) - 0x800) >> 4);
+		input->right_y = clamp_axis(-(((s32)switch_axis_y(&report[9]) - 0x800) >> 4));
+	}
 
 	if(right & 0x08) buttons |= SWITCH_PRO_BTN_A;
 	if(right & 0x04) buttons |= SWITCH_PRO_BTN_B;
@@ -120,6 +164,12 @@ void SwitchProReset(struct SwitchProState *state)
 {
 	clear_bytes((u8*)state, sizeof(*state));
 	state->drop_first_basic_report = 1;
+	state->left_center_x = state->left_center_y = 0x800;
+	state->right_center_x = state->right_center_y = 0x800;
+	state->left_min_x = state->left_min_y = 0x266;
+	state->right_min_x = state->right_min_y = 0x266;
+	state->left_max_x = state->left_max_y = 0xD9A;
+	state->right_max_x = state->right_max_y = 0xD9A;
 }
 
 s32 SwitchProParseReport(struct SwitchProState *state, const u8 *report,
@@ -131,7 +181,7 @@ s32 SwitchProParseReport(struct SwitchProState *state, const u8 *report,
 	if((report[0] == SWITCH_PRO_REPORT_FULL ||
 		report[0] == SWITCH_PRO_REPORT_COMMAND) && len >= 13)
 	{
-		parse_full(report, input);
+		parse_full(state, report, input);
 		return 1;
 	}
 
@@ -190,9 +240,17 @@ u16 SwitchProInitDelayMs(const struct SwitchProState *state)
 		case SWITCH_PRO_INIT_INITIAL_DELAY:
 			return 300;
 		case SWITCH_PRO_INIT_DEVICE_INFO_ACKED:
+		case SWITCH_PRO_INIT_PLAYER_LED_ACKED:
+		case SWITCH_PRO_INIT_VIBRATION_ACKED:
+		case SWITCH_PRO_INIT_USER_CAL_ACKED:
+		case SWITCH_PRO_INIT_FACTORY_CAL_ACKED:
 			return 60;
 		case SWITCH_PRO_INIT_WAIT_DEVICE_INFO:
 		case SWITCH_PRO_INIT_WAIT_PLAYER_LED:
+		case SWITCH_PRO_INIT_WAIT_VIBRATION:
+		case SWITCH_PRO_INIT_WAIT_USER_CAL:
+		case SWITCH_PRO_INIT_WAIT_FACTORY_CAL:
+		case SWITCH_PRO_INIT_WAIT_REPORT_MODE:
 			return 100;
 		default:
 			return 0;
@@ -217,6 +275,26 @@ u8 SwitchProInitPoll(struct SwitchProState *state)
 			state->init_state = SWITCH_PRO_INIT_WAIT_PLAYER_LED;
 			state->init_retries = 1;
 			break;
+		case SWITCH_PRO_INIT_PLAYER_LED_ACKED:
+			command = SWITCH_PRO_SUBCMD_VIBRATION;
+			state->init_state = SWITCH_PRO_INIT_WAIT_VIBRATION;
+			state->init_retries = 1;
+			break;
+		case SWITCH_PRO_INIT_VIBRATION_ACKED:
+			command = SWITCH_PRO_SUBCMD_SPI_READ;
+			state->init_state = SWITCH_PRO_INIT_WAIT_USER_CAL;
+			state->init_retries = 1;
+			break;
+		case SWITCH_PRO_INIT_USER_CAL_ACKED:
+			command = SWITCH_PRO_SUBCMD_SPI_READ;
+			state->init_state = SWITCH_PRO_INIT_WAIT_FACTORY_CAL;
+			state->init_retries = 1;
+			break;
+		case SWITCH_PRO_INIT_FACTORY_CAL_ACKED:
+			command = SWITCH_PRO_SUBCMD_REPORT_MODE;
+			state->init_state = SWITCH_PRO_INIT_WAIT_REPORT_MODE;
+			state->init_retries = 1;
+			break;
 		case SWITCH_PRO_INIT_WAIT_DEVICE_INFO:
 			command = SWITCH_PRO_SUBCMD_DEVICE_INFO;
 			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
@@ -237,6 +315,42 @@ u8 SwitchProInitPoll(struct SwitchProState *state)
 			}
 			state->init_retries++;
 			break;
+		case SWITCH_PRO_INIT_WAIT_VIBRATION:
+			command = SWITCH_PRO_SUBCMD_VIBRATION;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+				goto init_failed;
+			state->init_retries++;
+			break;
+		case SWITCH_PRO_INIT_WAIT_USER_CAL:
+			command = SWITCH_PRO_SUBCMD_SPI_READ;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+			{
+				/* Factory calibration remains usable when no user block exists. */
+				state->init_state = SWITCH_PRO_INIT_USER_CAL_ACKED;
+				state->init_retries = 0;
+				state->pending_subcommand = 0;
+				return SWITCH_PRO_INIT_ACTION_NONE;
+			}
+			state->init_retries++;
+			break;
+		case SWITCH_PRO_INIT_WAIT_FACTORY_CAL:
+			command = SWITCH_PRO_SUBCMD_SPI_READ;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+			{
+				/* Safe default calibration is already installed by Reset. */
+				state->init_state = SWITCH_PRO_INIT_FACTORY_CAL_ACKED;
+				state->init_retries = 0;
+				state->pending_subcommand = 0;
+				return SWITCH_PRO_INIT_ACTION_NONE;
+			}
+			state->init_retries++;
+			break;
+		case SWITCH_PRO_INIT_WAIT_REPORT_MODE:
+			command = SWITCH_PRO_SUBCMD_REPORT_MODE;
+			if(state->init_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+				goto init_failed;
+			state->init_retries++;
+			break;
 		default:
 			return SWITCH_PRO_INIT_ACTION_NONE;
 	}
@@ -244,10 +358,106 @@ u8 SwitchProInitPoll(struct SwitchProState *state)
 	state->pending_subcommand = command;
 	if(command == SWITCH_PRO_SUBCMD_DEVICE_INFO)
 		return SWITCH_PRO_INIT_ACTION_DEVICE_INFO;
-	return SWITCH_PRO_INIT_ACTION_PLAYER_LED;
+	if(command == SWITCH_PRO_SUBCMD_PLAYER_LED)
+		return SWITCH_PRO_INIT_ACTION_PLAYER_LED;
+	if(command == SWITCH_PRO_SUBCMD_VIBRATION)
+		return SWITCH_PRO_INIT_ACTION_VIBRATION;
+	if(command == SWITCH_PRO_SUBCMD_SPI_READ)
+		return state->init_state == SWITCH_PRO_INIT_WAIT_USER_CAL ?
+			SWITCH_PRO_INIT_ACTION_USER_CAL : SWITCH_PRO_INIT_ACTION_FACTORY_CAL;
+	return SWITCH_PRO_INIT_ACTION_REPORT_MODE;
+
+init_failed:
+	state->init_state = SWITCH_PRO_INIT_FAILED;
+	state->pending_subcommand = 0;
+	return SWITCH_PRO_INIT_ACTION_FAILED;
 }
 
-u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command)
+static void finalize_axis(u16 center, u16 below, u16 above, u16 *minimum,
+	u16 *maximum)
+{
+	if(center == 0xFFF)
+		center = 0x800;
+	if(below == 0xFFF)
+		below = 1434;
+	if(above == 0xFFF)
+		above = 1434;
+	*minimum = center > below ? center - below : 0;
+	*maximum = center + above < 0x1000 ? center + above : 0xFFF;
+}
+
+static void parse_left_calibration(struct SwitchProState *state, const u8 *raw)
+{
+	u16 max_x = switch_axis_x(&raw[0]);
+	u16 max_y = switch_axis_y(&raw[0]);
+	u16 center_x = switch_axis_x(&raw[3]);
+	u16 center_y = switch_axis_y(&raw[3]);
+	u16 min_x = switch_axis_x(&raw[6]);
+	u16 min_y = switch_axis_y(&raw[6]);
+	if(center_x == 0xFFF) center_x = 0x800;
+	if(center_y == 0xFFF) center_y = 0x800;
+	state->left_center_x = center_x;
+	state->left_center_y = center_y;
+	finalize_axis(center_x, min_x, max_x, &state->left_min_x,
+		&state->left_max_x);
+	finalize_axis(center_y, min_y, max_y, &state->left_min_y,
+		&state->left_max_y);
+	state->left_calibrated = 1;
+}
+
+static void parse_right_calibration(struct SwitchProState *state, const u8 *raw)
+{
+	u16 center_x = switch_axis_x(&raw[0]);
+	u16 center_y = switch_axis_y(&raw[0]);
+	u16 min_x = switch_axis_x(&raw[3]);
+	u16 min_y = switch_axis_y(&raw[3]);
+	u16 max_x = switch_axis_x(&raw[6]);
+	u16 max_y = switch_axis_y(&raw[6]);
+	if(center_x == 0xFFF) center_x = 0x800;
+	if(center_y == 0xFFF) center_y = 0x800;
+	state->right_center_x = center_x;
+	state->right_center_y = center_y;
+	finalize_axis(center_x, min_x, max_x, &state->right_min_x,
+		&state->right_max_x);
+	finalize_axis(center_y, min_y, max_y, &state->right_min_y,
+		&state->right_max_y);
+	state->right_calibrated = 1;
+}
+
+static u8 parse_spi_response(struct SwitchProState *state, const u8 *data,
+	u16 data_len)
+{
+	u32 address;
+	u8 size;
+	const u8 *raw;
+	if(data == 0 || data_len < 5)
+		return 0;
+	address = read_le32(data);
+	size = data[4];
+	if(data_len < (u16)(5 + size))
+		return 0;
+	raw = &data[5];
+	if(address == SWITCH_PRO_USER_CAL_ADDR && size >= 22)
+	{
+		if(raw[0] == 0xB2 && raw[1] == 0xA1)
+			parse_left_calibration(state, &raw[2]);
+		if(raw[11] == 0xB2 && raw[12] == 0xA1)
+			parse_right_calibration(state, &raw[13]);
+		return 1;
+	}
+	if(address == SWITCH_PRO_FACTORY_CAL_ADDR && size >= 18)
+	{
+		if(!state->left_calibrated)
+			parse_left_calibration(state, &raw[0]);
+		if(!state->right_calibrated)
+			parse_right_calibration(state, &raw[9]);
+		return 1;
+	}
+	return 0;
+}
+
+u8 SwitchProInitHandleResponse(struct SwitchProState *state, u8 ack, u8 command,
+	const u8 *data, u16 data_len)
 {
 	if(state == 0 || command != state->pending_subcommand)
 		return SWITCH_PRO_ACK_IGNORED;
@@ -257,6 +467,8 @@ u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command)
 	if(command == SWITCH_PRO_SUBCMD_DEVICE_INFO &&
 		state->init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO)
 	{
+		if(data != 0 && data_len >= 3)
+			state->device_type = data[2];
 		state->init_state = SWITCH_PRO_INIT_DEVICE_INFO_ACKED;
 		state->init_retries = 0;
 		state->pending_subcommand = 0;
@@ -264,6 +476,39 @@ u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command)
 	}
 	if(command == SWITCH_PRO_SUBCMD_PLAYER_LED &&
 		state->init_state == SWITCH_PRO_INIT_WAIT_PLAYER_LED)
+	{
+		state->init_state = SWITCH_PRO_INIT_PLAYER_LED_ACKED;
+		state->init_retries = 0;
+		state->pending_subcommand = 0;
+		return SWITCH_PRO_ACK_ACCEPTED;
+	}
+	if(command == SWITCH_PRO_SUBCMD_VIBRATION &&
+		state->init_state == SWITCH_PRO_INIT_WAIT_VIBRATION)
+	{
+		state->init_state = SWITCH_PRO_INIT_VIBRATION_ACKED;
+		state->init_retries = 0;
+		state->pending_subcommand = 0;
+		return SWITCH_PRO_ACK_ACCEPTED;
+	}
+	if(command == SWITCH_PRO_SUBCMD_SPI_READ &&
+		(state->init_state == SWITCH_PRO_INIT_WAIT_USER_CAL ||
+		 state->init_state == SWITCH_PRO_INIT_WAIT_FACTORY_CAL))
+	{
+		u8 was_user = state->init_state == SWITCH_PRO_INIT_WAIT_USER_CAL;
+		if(!parse_spi_response(state, data, data_len))
+			return SWITCH_PRO_ACK_NEGATIVE;
+		if(was_user && state->left_calibrated && state->right_calibrated)
+			state->init_state = SWITCH_PRO_INIT_FACTORY_CAL_ACKED;
+		else if(was_user)
+			state->init_state = SWITCH_PRO_INIT_USER_CAL_ACKED;
+		else
+			state->init_state = SWITCH_PRO_INIT_FACTORY_CAL_ACKED;
+		state->init_retries = 0;
+		state->pending_subcommand = 0;
+		return SWITCH_PRO_ACK_ACCEPTED;
+	}
+	if(command == SWITCH_PRO_SUBCMD_REPORT_MODE &&
+		state->init_state == SWITCH_PRO_INIT_WAIT_REPORT_MODE)
 	{
 		state->init_state = SWITCH_PRO_INIT_READY;
 		state->init_retries = 0;
@@ -309,6 +554,7 @@ u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on)
 		case 9: return blink_on ? 0x90 : 0x60;
 		case 10: return blink_on ? 0x30 : 0xC0;
 		case 11: return 0x90;
+		case 12: return 0x60;
 		default: return 0x00;
 	}
 }

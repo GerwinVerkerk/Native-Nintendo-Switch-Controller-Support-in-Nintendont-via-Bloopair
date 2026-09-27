@@ -3,6 +3,7 @@
 #include "HID.h"
 #include "hidmem.h"
 #include "wiidrc.h"
+#include "../../../../../common/include/SwitchProDiag.h"
 #define PAD_CHAN0_BIT				0x80000000
 
 //from our asm
@@ -28,6 +29,10 @@ static vu32* PADBarrelEnabled = (vu32*)0xD3003140;
 static vu32* PADBarrelPress = (vu32*)0xD3003150;
 
 static volatile struct BTPadCont *BTPad = (volatile struct BTPadCont*)0x932F0000;
+static volatile struct SwitchProArmDiag *SwitchArmDiag =
+	(volatile struct SwitchProArmDiag*)0x932F0100;
+static volatile struct SwitchProPpcDiag *SwitchPpcDiag =
+	(volatile struct SwitchProPpcDiag*)0x932F0200;
 static vu32* BTMotor = (vu32*)0x93003040;
 static vu32* BTPadFree = (vu32*)0x93003050;
 static vu32* SIInited = (vu32*)0x93003060;
@@ -846,9 +851,25 @@ u32 PADRead(u32 calledByGame)
 
 		memInvalidate = (u32)&BTPad[chan];
 		asm volatile("dcbi 0,%0; sync" : : "b"(memInvalidate) : "memory");
+		memInvalidate = (u32)SwitchArmDiag;
+		asm volatile("dcbi 0,%0; sync" : : "b"(memInvalidate) : "memory");
 
 		if(BTPad[chan].used == C_NOT_SET)
 			continue;
+		if(SwitchArmDiag->magic == SWITCH_PRO_DIAG_MAGIC &&
+			SwitchArmDiag->publish_channel == chan)
+		{
+			SwitchPpcDiag->magic = SWITCH_PRO_DIAG_MAGIC;
+			SwitchPpcDiag->version = SWITCH_PRO_DIAG_VERSION;
+			SwitchPpcDiag->read_sequence++;
+			SwitchPpcDiag->channel = chan;
+			SwitchPpcDiag->seen_used = BTPad[chan].used;
+			SwitchPpcDiag->seen_buttons = BTPad[chan].button;
+			SwitchPpcDiag->seen_left_x = BTPad[chan].xAxisL;
+			SwitchPpcDiag->seen_left_y = BTPad[chan].yAxisL;
+			SwitchPpcDiag->seen_right_x = BTPad[chan].xAxisR;
+			SwitchPpcDiag->seen_right_y = BTPad[chan].yAxisR;
+		}
 
 		used |= (1<<chan);
 
@@ -1510,6 +1531,21 @@ u32 PADRead(u32 calledByGame)
 		}
 
 		Pad[chan].button = button;
+		if(SwitchArmDiag->magic == SWITCH_PRO_DIAG_MAGIC &&
+			SwitchArmDiag->publish_channel == chan)
+		{
+			SwitchPpcDiag->pad_buttons = Pad[chan].button;
+			SwitchPpcDiag->pad_stick_x = Pad[chan].stickX;
+			SwitchPpcDiag->pad_stick_y = Pad[chan].stickY;
+			SwitchPpcDiag->pad_substick_x = Pad[chan].substickX;
+			SwitchPpcDiag->pad_substick_y = Pad[chan].substickY;
+			if(Pad[chan].button & PAD_BUTTON_A)
+				SwitchPpcDiag->selftest_a_seen = 1;
+			memFlush = (u32)SwitchPpcDiag;
+			asm volatile("dcbf 0,%0" : : "b"(memFlush) : "memory");
+			memFlush += 32;
+			asm volatile("dcbf 0,%0; sync" : : "b"(memFlush) : "memory");
+		}
 
 //#define DEBUG_cStick	1
 		#ifdef DEBUG_cStick

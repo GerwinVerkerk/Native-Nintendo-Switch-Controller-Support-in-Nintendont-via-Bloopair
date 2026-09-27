@@ -49,6 +49,9 @@ struct BTPadCont {
 	s16 zAccel;
 } __attribute__((aligned(32)));
 
+typedef char BTPadContSizeCheck[(sizeof(struct BTPadCont) == 32) ? 1 : -1];
+typedef char BTPadContButtonOffsetCheck[(__builtin_offsetof(struct BTPadCont, button) == 12) ? 1 : -1];
+
 #define PAD_BUTTON_LEFT         0x0001
 #define PAD_BUTTON_RIGHT        0x0002
 #define PAD_BUTTON_DOWN         0x0004

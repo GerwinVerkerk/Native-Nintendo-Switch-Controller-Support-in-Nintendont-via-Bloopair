@@ -25,7 +25,12 @@ typedef int32_t s32;
 
 #define SWITCH_PRO_SUBCMD_DEVICE_INFO 0x02
 #define SWITCH_PRO_SUBCMD_REPORT_MODE 0x03
+#define SWITCH_PRO_SUBCMD_SPI_READ    0x10
 #define SWITCH_PRO_SUBCMD_PLAYER_LED  0x30
+#define SWITCH_PRO_SUBCMD_VIBRATION   0x48
+
+#define SWITCH_PRO_FACTORY_CAL_ADDR 0x603D
+#define SWITCH_PRO_USER_CAL_ADDR    0x8010
 
 #define SWITCH_PRO_INIT_RETRY_MAX 10
 #define SWITCH_PRO_STREAM_READY_REPORTS 3
@@ -36,6 +41,14 @@ enum SwitchProInitState {
 	SWITCH_PRO_INIT_WAIT_DEVICE_INFO,
 	SWITCH_PRO_INIT_DEVICE_INFO_ACKED,
 	SWITCH_PRO_INIT_WAIT_PLAYER_LED,
+	SWITCH_PRO_INIT_PLAYER_LED_ACKED,
+	SWITCH_PRO_INIT_WAIT_VIBRATION,
+	SWITCH_PRO_INIT_VIBRATION_ACKED,
+	SWITCH_PRO_INIT_WAIT_USER_CAL,
+	SWITCH_PRO_INIT_USER_CAL_ACKED,
+	SWITCH_PRO_INIT_WAIT_FACTORY_CAL,
+	SWITCH_PRO_INIT_FACTORY_CAL_ACKED,
+	SWITCH_PRO_INIT_WAIT_REPORT_MODE,
 	SWITCH_PRO_INIT_READY,
 	SWITCH_PRO_INIT_FAILED
 };
@@ -44,6 +57,10 @@ enum SwitchProInitAction {
 	SWITCH_PRO_INIT_ACTION_NONE = 0,
 	SWITCH_PRO_INIT_ACTION_DEVICE_INFO,
 	SWITCH_PRO_INIT_ACTION_PLAYER_LED,
+	SWITCH_PRO_INIT_ACTION_VIBRATION,
+	SWITCH_PRO_INIT_ACTION_USER_CAL,
+	SWITCH_PRO_INIT_ACTION_FACTORY_CAL,
+	SWITCH_PRO_INIT_ACTION_REPORT_MODE,
 	SWITCH_PRO_INIT_ACTION_FAILED
 };
 
@@ -76,6 +93,21 @@ struct SwitchProState {
 	u8 init_retries;
 	u8 pending_subcommand;
 	u8 consecutive_stream_reports;
+	u8 device_type;
+	u8 left_calibrated;
+	u8 right_calibrated;
+	u16 left_center_x;
+	u16 left_center_y;
+	u16 left_min_x;
+	u16 left_min_y;
+	u16 left_max_x;
+	u16 left_max_y;
+	u16 right_center_x;
+	u16 right_center_y;
+	u16 right_min_x;
+	u16 right_min_y;
+	u16 right_max_x;
+	u16 right_max_y;
 };
 
 struct SwitchProInput {
@@ -94,7 +126,8 @@ u16 SwitchProBuildSubcommand(struct SwitchProState *state, u8 *report,
 void SwitchProInitStart(struct SwitchProState *state);
 u16 SwitchProInitDelayMs(const struct SwitchProState *state);
 u8 SwitchProInitPoll(struct SwitchProState *state);
-u8 SwitchProInitHandleAck(struct SwitchProState *state, u8 ack, u8 command);
+u8 SwitchProInitHandleResponse(struct SwitchProState *state, u8 ack, u8 command,
+	const u8 *data, u16 data_len);
 u8 SwitchProTrackStreamReport(struct SwitchProState *state, u8 report_id,
 	u8 parsed);
 u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on);

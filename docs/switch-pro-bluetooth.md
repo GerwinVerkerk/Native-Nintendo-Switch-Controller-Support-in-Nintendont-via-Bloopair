@@ -12,11 +12,12 @@ USB adapter.
 - Listens for stored-key addresses that are absent from vWii SYSCONF and probes
   those devices as Switch Pro controllers.
 - Runs a paced Switch initialization state machine outside the receive
-  callback: wait 300 ms, request device information, wait for its positive ACK,
-  wait at least 60 ms, then set the player LED.
-- Retries each initialization command every 100 ms, up to ten sends, and
-  initially keeps the controller's compatibility `0x3f` input mode instead of
-  forcing full `0x30` mode.
+  callback: wait 300 ms, request device information, set the player LED, enable
+  vibration with silent frames, read user/factory stick calibration and then
+  request continuous full `0x30` reports. Every stage requires its matching
+  positive ACK before advancing.
+- Retries each initialization command every 100 ms, up to ten sends, and uses
+  safe default calibration only when no usable calibration block is returned.
 - Parses both full `0x30`/`0x21` reports and fallback `0x3f` basic reports.
 - Parses the standard `0x3f` HID button map and little-endian 16-bit axes used
   by original Switch Pro Controllers.
@@ -26,6 +27,11 @@ USB adapter.
   channel, then publishes it immediately instead of waiting for another packet.
 - Uses Nintendo's neutral rumble frames in every subcommand and updates the
   controller player LED to the GameCube channel actually assigned.
+- Publishes only the established `C_CCP` contract to the PPC/GameCube pad
+  reader; the Switch-specific type bit remains private to the ARM state.
+- Includes a one-shot half-second synthetic GameCube-A pulse after channel
+  assignment plus a bounded RAM-only ARM/PPC trace. This tests the shared-memory
+  boundary without file I/O during gameplay.
 - Reopens the Bluetooth listeners after a Switch Pro disconnect and answers
   later link-key requests from the persisted controller key list.
 
@@ -215,17 +221,21 @@ Observed on Wii U hardware:
   PADReadGC exposes a real channel, and mirrors live A/B/X/Y parsing on the Wii
   Remote LEDs. The input diagnostic is also delayed until a `BTPadCont` write
   actually occurs rather than merely parsing three reports.
+- Build `239aa8f` reached a real assigned channel (fixed player LED) and at
+  least one `BTPadCont` publication, but Double Dash still received no live
+  button or stick input. This narrows the failure to live report values or the
+  ARM-to-PPC/GameCube-pad boundary. The next build therefore uses the complete
+  Bloopair-style `0x30` sequence and instruments both sides of that boundary in
+  RAM.
 
 The current implementation keeps the proven authentication/encryption gate and
-adds the missing initialization sequence found by comparison with Bloopair,
-Linux `hid-nintendo`, and BlueRetro. It no longer sends commands directly from
-the receive callback, starts with Device Info `0x02`, enforces pacing/retries,
-sets the player LED only after the matching ACK, and requires three genuine
-streaming reports before publishing a GameCube controller. Command reply
-`0x21` can no longer claim a player slot. The full-report button bit layout was
-also corrected to match the published Switch protocol. The follow-up corrects
-the separate basic-report layout, preserves the latest report across channel
-assignment, and uses silent subcommand rumble frames.
+uses the full initialization sequence found in Bloopair and Linux
+`hid-nintendo`: Device Info, player LED, vibration enable, user/factory stick
+calibration and explicit continuous `0x30` report mode. It enforces
+pacing/retries, accepts only matching positive ACKs, preserves the latest
+report across channel assignment, uses silent subcommand rumble frames and
+requires three genuine streaming reports before publishing a GameCube
+controller. Command reply `0x21` can no longer claim a player slot.
 
 Still requires Wii U hardware:
 
