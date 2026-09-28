@@ -1565,6 +1565,10 @@ static void hci_conn_complete_evt(struct pbuf *p)
 			}
 			break;
 		case HCI_PAGE_TIMEOUT:
+			if(link!=NULL) {
+				hci_close(link);
+				lp_connect_cfm(bdaddr,((u8_t*)p->payload)[10],ERR_CONN);
+			}
 			break;
 		default:
 			if(link!=NULL) {
@@ -1580,13 +1584,19 @@ static void hci_inquiry_result_evt(struct pbuf *p)
 	u8_t num_resp;
 	u32_t i,resp_off;
 	struct bd_addr *bdaddr;
-	struct hci_inq_res *ires;
+	struct hci_inq_res *ires,*existing;
 
 	num_resp = ((u8_t*)p->payload)[0];
 	//dbgprintf("hci_inquriy_result_evt(%d)\n",num_resp);
 	for(i=0;i<num_resp && i<MEMB_NUM_HCI_INQ;i++) {
 		resp_off = (i*14);
 		bdaddr = (void*)(((u8_t*)p->payload)+(1+resp_off));
+		/* Keep one result per address. Repeated reports otherwise fill the
+		 * bounded pool before a later controller can be recorded. */
+		for(existing=hci_dev->ires;existing!=NULL;existing=existing->next) {
+			if(bd_addr_cmp(&existing->bdaddr,bdaddr)) break;
+		}
+		if(existing!=NULL) continue;
 		if((ires=btmemb_alloc(&hci_inq_results))!=NULL) {
 			bd_addr_set(&(ires->bdaddr),bdaddr);
 			ires->psrm = ((u8_t*)p->payload)[7+resp_off];

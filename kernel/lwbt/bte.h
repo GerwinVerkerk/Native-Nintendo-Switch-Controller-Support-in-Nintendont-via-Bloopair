@@ -112,6 +112,8 @@ struct bte_pcb
 	u8 conn_notified;
 	u8 outgoing_hid;
 	u8 hid_connect_started;
+	u8 acl_connect_pending;
+	u8 acl_connected;
 
 
 	s32 (*recv)(void *arg,void *buffer,u16 len);

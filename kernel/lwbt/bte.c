@@ -529,6 +529,8 @@ s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*con
 	pcb->conn_notified = 0;
 	pcb->outgoing_hid = 0;
 	pcb->hid_connect_started = 0;
+	pcb->acl_connect_pending = 0;
+	pcb->acl_connected = 0;
 	pcb->conn_cfm = conn_cfm;
 	pcb->state = (u32)STATE_CONNECTING;
 
@@ -576,6 +578,8 @@ s32 bte_registerhidhostasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*co
 	pcb->conn_notified = 0;
 	pcb->outgoing_hid = 1;
 	pcb->hid_connect_started = 0;
+	pcb->acl_connect_pending = 0;
+	pcb->acl_connected = 0;
 	pcb->conn_cfm = conn_cfm;
 	pcb->state = (u32)STATE_CONNECTING;
 	bd_addr_set(&pcb->bdaddr, bdaddr);
@@ -584,10 +588,13 @@ s32 bte_registerhidhostasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*co
 		lp_is_connected(bdaddr));
 	if(lp_is_connected(bdaddr))
 	{
+		pcb->acl_connected = 1;
 		BTDiagnosticConnectionTarget(bdaddr);
 		return ERR_OK;
 	}
 	err = lp_connect_req(bdaddr, 0);
+	if(err == ERR_OK)
+		pcb->acl_connect_pending = 1;
 	if(err != ERR_OK)
 	{
 		BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_ACL_REQUEST, err, 0);

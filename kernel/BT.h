@@ -44,6 +44,9 @@ void BTTraceDumpToFile(void);
 #define BT_HID_HOST_CONTROL_COMPLETE  3
 #define BT_HID_HOST_INTERRUPT_REQUEST 4
 #define BT_HID_HOST_INTERRUPT_COMPLETE 5
+#define BT_HID_HOST_SLOT_REUSED        6
+#define BT_HID_HOST_SLOT_CREATED       7
+#define BT_HID_HOST_ACL_RETRY          8
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);

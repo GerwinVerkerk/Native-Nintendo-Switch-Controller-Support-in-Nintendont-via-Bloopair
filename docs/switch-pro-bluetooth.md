@@ -273,6 +273,15 @@ Observed on Wii U hardware:
   waits for complete L2CAP configuration, then opens interrupt PSM `0x13`.
   Every ACL/L2CAP request and result/status is recorded in the bounded binary
   trace. Wii Remote and Wii U Pro keep the original incoming-listener route.
+- The combined trace from build `53a5c32` found the real Switch class
+  `0x002508` and reached an encrypted ACL link, but never issued an outgoing
+  control-PSM request. It also exposed that every retry inquiry re-registered
+  all SYSCONF controllers and replaced their BTE sockets while the connection
+  was in progress. Inquiry reports additionally contained repeated addresses
+  that consumed the bounded result list. The follow-up registers SYSCONF
+  devices once, deduplicates inquiry results by address, reuses a single
+  Switch slot, tracks pending/established ACL state and makes page timeout
+  retryable. This combined correction is not yet hardware-validated.
 
 The current implementation keeps the proven authentication/encryption gate and
 uses the full initialization sequence found in Bloopair and Linux

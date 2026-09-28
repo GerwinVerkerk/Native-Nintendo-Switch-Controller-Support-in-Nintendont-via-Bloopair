@@ -131,6 +131,8 @@ static u32 SwitchInquiryRetryTimer;
 static u8 SwitchInquiryActive;
 static u8 SwitchInquiryAttempts;
 static u8 SwitchInquiryTargetFound;
+static u8 BTPadRegistrationInitialized;
+static u8 BTPadRegisteredCount;
 
 static void BTSwitchStartProtocol(struct BTPadStat *stat);
 
@@ -184,6 +186,18 @@ static struct BTPadStat *BTFindSwitchStat(const struct bd_addr *bdaddr)
 	return NULL;
 }
 
+static struct BTPadStat *BTFindRegisteredStat(const struct bd_addr *bdaddr)
+{
+	u32 i;
+	for(i = 0; i < BTPadRegisteredCount; i++)
+	{
+		if(memcmp(BTPadStatus[i].bdaddr.addr, bdaddr->addr,
+			sizeof(bdaddr->addr)) == 0)
+			return &BTPadStatus[i];
+	}
+	return NULL;
+}
+
 static void BTDiagnosticAdvanceSecurity(void)
 {
 	if(BTDiagnosticStage >= BT_DIAG_HID_OPEN && BTDiagnosticAuthenticated &&
@@ -197,6 +211,10 @@ static void BTDiagnosticAdvanceSecurity(void)
 static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 {
 	SwitchInquiryTargetFound = 1;
+	if(BTDiagnosticTargetSet &&
+		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
+			sizeof(BTDiagnosticTarget.addr)) == 0)
+		return;
 	BTDiagnosticTarget = *bdaddr;
 	BTDiagnosticTargetSet = 1;
 	BTDiagnosticStage = BT_DIAG_FOUND;
@@ -223,11 +241,22 @@ void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr)
 
 void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result)
 {
+	struct BTPadStat *stat = bdaddr != NULL ? BTFindSwitchStat(bdaddr) : NULL;
 	u32 target = bdaddr != NULL && BTDiagnosticTargetSet &&
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
 			sizeof(BTDiagnosticTarget.addr)) == 0;
 	BTSwitchTraceArm(SWITCH_TRACE_ARM_HID_HOST, BT_HID_HOST_ACL_REQUEST,
 		result, target, 0, 0, 0, 0, 0, 0);
+	if(stat != NULL && stat->sock != NULL)
+	{
+		stat->sock->acl_connect_pending = 0;
+		stat->sock->acl_connected = result == HCI_SUCCESS;
+		if(result != HCI_SUCCESS)
+		{
+			stat->sock->security_ready = 0;
+			stat->sock->hid_connect_started = 0;
+		}
+	}
 }
 
 void BTDiagnosticHIDHostEvent(const struct bd_addr *bdaddr, u32 stage,
@@ -1273,51 +1302,73 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 			cod == 0x082500, 0, 0, 0, 0, 0, 0);
 	}
 
-	count = BTDevices->num_registered;
-	/* Preserve one listener slot for a controller found by this inquiry. */
-	if(count >= CONF_PAD_MAX_REGISTERED)
-		count = CONF_PAD_MAX_REGISTERED - 1;
-	for(i = 0; i < count; i++)
+	/* SYSCONF devices are persistent. Register them once: rebuilding these
+	 * sockets after every inquiry used to replace a live Switch HID-host PCB
+	 * while authentication/encryption was already in progress. */
+	if(!BTPadRegistrationInitialized)
 	{
-		BD_ADDR(&(bdaddr),BTDevices->registered[i].bdaddr[5],BTDevices->registered[i].bdaddr[4],BTDevices->registered[i].bdaddr[3],
-			BTDevices->registered[i].bdaddr[2],BTDevices->registered[i].bdaddr[1],BTDevices->registered[i].bdaddr[0]);
-		if(strstr(BTDevices->registered[i].name, "Pro Controller") != NULL &&
-			strstr(BTDevices->registered[i].name, "-UC") == NULL)
+		count = BTDevices->num_registered;
+		/* Preserve one slot for a newly discovered controller. */
+		if(count >= CONF_PAD_MAX_REGISTERED)
+			count = CONF_PAD_MAX_REGISTERED - 1;
+		BTPadRegistrationInitialized = 1;
+		for(i = 0; i < count; i++)
 		{
-			BTPadStatus[i].transfertype = TRANSFER_SWITCH_PRO;
-			BTDiagnosticSetTarget(&bdaddr);
+			BD_ADDR(&(bdaddr),BTDevices->registered[i].bdaddr[5],BTDevices->registered[i].bdaddr[4],BTDevices->registered[i].bdaddr[3],
+				BTDevices->registered[i].bdaddr[2],BTDevices->registered[i].bdaddr[1],BTDevices->registered[i].bdaddr[0]);
+			if(strstr(BTDevices->registered[i].name, "Pro Controller") != NULL &&
+				strstr(BTDevices->registered[i].name, "-UC") == NULL)
+			{
+				BTPadStatus[i].transfertype = TRANSFER_SWITCH_PRO;
+				BTDiagnosticSetTarget(&bdaddr);
+			}
+			else if(strstr(BTDevices->registered[i].name, "-UC") != NULL)
+				BTPadStatus[i].transfertype = 0x3D;
+			else
+				BTPadStatus[i].transfertype = 0x34;
+			BTPadStatus[i].channel = CHAN_NOT_SET;
+			RegisterBTPad(&BTPadStatus[i], &bdaddr);
+			BTPadRegisteredCount = i + 1;
 		}
-		else if(strstr(BTDevices->registered[i].name, "-UC") != NULL)
-			BTPadStatus[i].transfertype = 0x3D;
-		else
-			BTPadStatus[i].transfertype = 0x34;
-		BTPadStatus[i].channel = CHAN_NOT_SET;
-		RegisterBTPad(&BTPadStatus[i], &bdaddr);
 	}
+	count = BTPadRegisteredCount;
 
 	/* Nintendo Switch Pro Controller class of device: 0x002508. */
 	for(i = 0; i < (u32)found && count < CONF_PAD_MAX_REGISTERED; i++)
 	{
-		u32 j;
-		u8 known = 0;
+		struct BTPadStat *known;
 		if(info[i].cod[0] != 0x08 || info[i].cod[1] != 0x25 || info[i].cod[2] != 0x00)
 			continue;
-		BTDiagnosticSetTarget(&info[i].bdaddr);
-		for(j = 0; j < count; j++)
+		known = BTFindRegisteredStat(&info[i].bdaddr);
+		if(known != NULL)
 		{
-			if(memcmp(BTPadStatus[j].bdaddr.addr, info[i].bdaddr.addr,
-				sizeof(info[i].bdaddr.addr)) == 0)
+			if(known->transfertype == TRANSFER_SWITCH_PRO)
 			{
-				known = 1;
-				break;
+				BTDiagnosticSetTarget(&info[i].bdaddr);
+				BTDiagnosticHIDHostEvent(&info[i].bdaddr,
+					BT_HID_HOST_SLOT_REUSED, 0,
+					known->sock != NULL);
+				if(known->sock != NULL && !known->sock->conn_notified &&
+					!known->sock->hid_connect_started &&
+					!known->sock->acl_connect_pending &&
+					!known->sock->acl_connected)
+				{
+					BTDiagnosticHIDHostEvent(&info[i].bdaddr,
+						BT_HID_HOST_ACL_RETRY, 0, 0);
+					bte_registerhidhostasync(known->sock,
+						&info[i].bdaddr, BTHandleConnect);
+				}
 			}
-		}
-		if(known)
 			break;
+		}
+		BTDiagnosticSetTarget(&info[i].bdaddr);
 		BTPadStatus[count].transfertype = TRANSFER_SWITCH_PRO;
 		BTPadStatus[count].channel = CHAN_NOT_SET;
 		RegisterBTPad(&BTPadStatus[count], &info[i].bdaddr);
+		BTDiagnosticHIDHostEvent(&info[i].bdaddr,
+			BT_HID_HOST_SLOT_CREATED, 0, count);
 		count++;
+		BTPadRegisteredCount = count;
 		break;
 	}
 	return ERR_OK;
@@ -1364,6 +1415,8 @@ void BTInit(void)
 	SwitchInquiryActive = 0;
 	SwitchInquiryAttempts = 0;
 	SwitchInquiryTargetFound = 0;
+	BTPadRegistrationInitialized = 0;
+	BTPadRegisteredCount = 0;
 	BTDiagnosticStage = 0;
 	BTDiagnosticTargetSet = 0;
 	BTDiagnosticStorePending = 0;
