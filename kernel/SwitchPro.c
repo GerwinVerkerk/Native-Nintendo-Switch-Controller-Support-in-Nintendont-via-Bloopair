@@ -5,6 +5,11 @@
  * under the terms of the GNU General Public License version 2.
  */
 #include "SwitchPro.h"
+#ifdef SWITCH_PRO_HOST_TEST
+#include <string.h>
+#else
+#include "string.h"
+#endif
 
 static void clear_bytes(u8 *data, u16 size)
 {
@@ -557,4 +562,71 @@ u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on)
 		case 12: return 0x60;
 		default: return 0x00;
 	}
+}
+
+void SwitchProTransportReset(struct SwitchProTransport *transport)
+{
+	memset(transport, 0, sizeof(*transport));
+}
+
+void SwitchProTransportBegin(struct SwitchProTransport *transport, u8 origin)
+{
+	SwitchProTransportReset(transport);
+	transport->origin = origin;
+	transport->state = SWITCH_PRO_TRANSPORT_WAIT_ACL;
+}
+
+u8 SwitchProTransportACLReady(struct SwitchProTransport *transport)
+{
+	if(transport->state != SWITCH_PRO_TRANSPORT_WAIT_ACL)
+		return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+	transport->state = SWITCH_PRO_TRANSPORT_WAIT_SECURITY;
+	return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+}
+
+u8 SwitchProTransportSecurityReady(struct SwitchProTransport *transport)
+{
+	if(transport->state != SWITCH_PRO_TRANSPORT_WAIT_SECURITY)
+		return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+	transport->authenticated = 1;
+	transport->encrypted = 1;
+	if(transport->origin == SWITCH_PRO_CONNECTION_INCOMING)
+	{
+		if(transport->control_open && transport->interrupt_open)
+		{
+			transport->state = SWITCH_PRO_TRANSPORT_READY;
+			return SWITCH_PRO_TRANSPORT_ACTION_READY;
+		}
+		transport->state = SWITCH_PRO_TRANSPORT_WAIT_INCOMING_HID;
+		return SWITCH_PRO_TRANSPORT_ACTION_ACCEPT_HID;
+	}
+	if(transport->origin == SWITCH_PRO_CONNECTION_OUTGOING)
+	{
+		transport->state = SWITCH_PRO_TRANSPORT_OPEN_OUTGOING_HID;
+		return SWITCH_PRO_TRANSPORT_ACTION_OPEN_HID;
+	}
+	transport->state = SWITCH_PRO_TRANSPORT_FAILED;
+	return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+}
+
+u8 SwitchProTransportChannelReady(struct SwitchProTransport *transport,
+	u8 control_channel)
+{
+	if(control_channel)
+		transport->control_open = 1;
+	else
+		transport->interrupt_open = 1;
+	if(!transport->control_open || !transport->interrupt_open ||
+		!transport->authenticated || !transport->encrypted)
+		return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+	if(transport->state != SWITCH_PRO_TRANSPORT_WAIT_INCOMING_HID &&
+		transport->state != SWITCH_PRO_TRANSPORT_OPEN_OUTGOING_HID)
+		return SWITCH_PRO_TRANSPORT_ACTION_NONE;
+	transport->state = SWITCH_PRO_TRANSPORT_READY;
+	return SWITCH_PRO_TRANSPORT_ACTION_READY;
+}
+
+void SwitchProTransportFail(struct SwitchProTransport *transport)
+{
+	transport->state = SWITCH_PRO_TRANSPORT_FAILED;
 }

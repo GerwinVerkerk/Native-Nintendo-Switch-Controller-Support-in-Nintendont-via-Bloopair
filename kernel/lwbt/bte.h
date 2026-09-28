@@ -114,6 +114,7 @@ struct bte_pcb
 	u8 hid_connect_started;
 	u8 acl_connect_pending;
 	u8 acl_connected;
+	u8 incoming_listener_mask;
 
 
 	s32 (*recv)(void *arg,void *buffer,u16 len);

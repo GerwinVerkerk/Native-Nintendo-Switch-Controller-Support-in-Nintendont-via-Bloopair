@@ -48,6 +48,9 @@ void BTTraceDumpToFile(void);
 #define BT_HID_HOST_SLOT_CREATED       7
 #define BT_HID_HOST_ACL_RETRY          8
 #define BT_HID_HOST_INCOMING_REQUEST   9
+#define BT_HID_HOST_INCOMING_LISTEN   10
+#define BT_HID_HOST_REMOTE_NAME       11
+#define BT_HID_HOST_TRANSPORT_READY   12
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
@@ -65,6 +68,10 @@ void BTDiagnosticIncomingConnectionRequest(const struct bd_addr *bdaddr,
 void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result);
 void BTDiagnosticHIDHostEvent(const struct bd_addr *bdaddr, u32 stage,
 	u32 result, u32 status);
+void BTDiagnosticHIDChannelOpen(const struct bd_addr *bdaddr,
+	u8 control_channel);
+void BTDiagnosticRemoteNameResult(const struct bd_addr *bdaddr, u8 result,
+	const u8 *name, u16 length);
 
 struct BTPadStat {
 	u32 controller;
@@ -90,6 +97,12 @@ struct BTPadStat {
 	u32 switch_led_channel;
 	u32 switch_selftest_state;
 	u32 switch_selftest_timer;
+	struct SwitchProTransport switch_transport;
+	u8 switch_link_key[16];
+	u8 switch_link_key_valid;
+	u8 switch_link_key_store_pending;
+	u8 switch_remote_name_requested;
+	u8 switch_remote_name_verified;
 } ALIGNED(32);
 
 struct BTPadCont {

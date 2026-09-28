@@ -365,6 +365,67 @@ static void test_stream_readiness_excludes_command_replies(void)
 		SWITCH_PRO_STREAM_READY_REPORTS);
 }
 
+static void test_incoming_transport_sequence(void)
+{
+	struct SwitchProTransport transport;
+	SwitchProTransportBegin(&transport, SWITCH_PRO_CONNECTION_INCOMING);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_WAIT_ACL);
+	assert(SwitchProTransportACLReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportSecurityReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_ACCEPT_HID);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_WAIT_INCOMING_HID);
+	assert(SwitchProTransportChannelReady(&transport, 1) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportChannelReady(&transport, 0) ==
+		SWITCH_PRO_TRANSPORT_ACTION_READY);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_READY);
+}
+
+static void test_outgoing_transport_sequence(void)
+{
+	struct SwitchProTransport transport;
+	SwitchProTransportBegin(&transport, SWITCH_PRO_CONNECTION_OUTGOING);
+	assert(SwitchProTransportACLReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportSecurityReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_OPEN_HID);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_OPEN_OUTGOING_HID);
+	assert(SwitchProTransportChannelReady(&transport, 1) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportChannelReady(&transport, 0) ==
+		SWITCH_PRO_TRANSPORT_ACTION_READY);
+}
+
+static void test_transport_rejects_wrong_order(void)
+{
+	struct SwitchProTransport transport;
+	SwitchProTransportReset(&transport);
+	assert(SwitchProTransportSecurityReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	SwitchProTransportBegin(&transport, SWITCH_PRO_CONNECTION_INCOMING);
+	assert(SwitchProTransportChannelReady(&transport, 1) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_WAIT_ACL);
+	SwitchProTransportFail(&transport);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_FAILED);
+}
+
+static void test_incoming_channels_may_arrive_before_security(void)
+{
+	struct SwitchProTransport transport;
+	SwitchProTransportBegin(&transport, SWITCH_PRO_CONNECTION_INCOMING);
+	assert(SwitchProTransportChannelReady(&transport, 1) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportChannelReady(&transport, 0) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportACLReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_NONE);
+	assert(SwitchProTransportSecurityReady(&transport) ==
+		SWITCH_PRO_TRANSPORT_ACTION_READY);
+	assert(transport.state == SWITCH_PRO_TRANSPORT_READY);
+}
+
 int main(void)
 {
 	test_full_report();
@@ -377,6 +438,10 @@ int main(void)
 	test_init_happy_path();
 	test_init_retry_timeout_and_negative_ack();
 	test_stream_readiness_excludes_command_replies();
+	test_incoming_transport_sequence();
+	test_outgoing_transport_sequence();
+	test_transport_rejects_wrong_order();
+	test_incoming_channels_may_arrive_before_security();
 	puts("switch_pro tests: ok");
 	return 0;
 }

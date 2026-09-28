@@ -35,6 +35,31 @@ USB adapter.
 - Reopens the Bluetooth listeners after a Switch Pro disconnect and answers
   later link-key requests from the persisted controller key list.
 
+## Connection directions
+
+The controller can reach Nintendont through two distinct Bluetooth flows. They
+share identity, security, Switch protocol and input translation only after the
+HID channels are fully configured:
+
+- **Incoming A-wake:** a previously bonded controller pages the console after a
+  face-button press. Nintendont classifies the HCI Connection Request, accepts
+  the ACL and the controller-initiated HID control/interrupt channels through
+  one persistent pair of L2CAP listeners. It does not issue outbound HID
+  connects on this path.
+- **Outgoing SYNC/discovery:** inquiry finds a discoverable controller.
+  Nintendont initiates the ACL, completes authentication/encryption, then opens
+  HID control PSM `0x11` followed by interrupt PSM `0x13`.
+
+Each Switch slot owns its connection origin, authentication/encryption flags,
+link key, remote-name status and channel state. Listener registration is
+idempotent so reconnects cannot consume additional listener PCBs. The two paths
+converge only after security and both HID channels are ready; from there they
+use the same paced Switch initialization and `C_CCP/BTPadCont` publication.
+
+Class of Device `0x002508` is an early candidate filter. A successful remote
+name of exactly `Pro Controller`, followed by the Switch Device Info response,
+provides the stronger identity checks before normal input publication.
+
 Rumble is intentionally not part of this first playable build. Capture and the
 two stick-click buttons have no GameCube equivalents and are ignored. Minus is
 reserved for a future mapping option.
@@ -89,10 +114,27 @@ original Switch Pro accept this sequence remains a hardware-test question.
    game is visible, press a face button on the Switch Pro Controller to make it
    reconnect.
 
-Rollback: restore the backed-up `boot.dol`. Pairing data is not modified by this
-build.
+Rollback: restore the backed-up `boot.dol`. A SYNC/discovery test can create or
+replace the controller link key, so Bloopair may need to pair the controller
+again afterwards.
 
 ## Hardware test protocol
+
+### Dual-route validation build
+
+Exercise both connection directions in one game session. First press A on an
+already bonded controller. This tests the incoming PAGE/listener route. If no
+fixed player LED appears within 20 seconds, hold SYNC for 5-10 seconds instead;
+this tests inquiry plus the outbound HID-host route in the same build. Once a
+fixed player LED appears, test the face buttons, D-pad, both sticks, shoulders
+and Plus once, then exit through Nintendont's normal game-exit combination.
+
+The bounded trace records both candidate routes, origin, identity/security
+events, L2CAP direction/results, Switch initialization, raw reports,
+`BTPadCont` publication and PPC `PADStatus`. A normal game exit writes the
+trace immediately, so the timed fallback wait is unnecessary. Reopen
+Nintendont for 15 seconds without starting a game to copy a USB-volume trace to
+SD before retrieving it.
 
 ### Instrumented pairing build
 
@@ -284,12 +326,13 @@ Observed on Wii U hardware:
   retryable. This combined correction is not yet hardware-validated.
 - The follow-up trace from build `8a524e5` explained why the controller could
   wake with A yet never enter the Switch state machine: an already paired Pro
-  Controller connects inbound and is not discoverable in inquiry. The ACL and
-  encryption events therefore had no known Switch target. The HCI Connection
-  Request handler now identifies Class of Device `0x002508`, records the
-  incoming address, creates one persistent Switch slot when the ACL completes,
-  and then runs the same authentication, encryption and outbound HID control/
-  interrupt sequence used by the discovery path.
+  Controller connects inbound and is not discoverable in inquiry. Later source
+  comparison with BlueRetro and Bloopair found that this incoming PAGE route
+  must accept controller-initiated HID channels; it must not reuse the outbound
+  HID-open sequence. The current implementation therefore keeps explicit
+  incoming and outgoing transport states, persistent incoming listeners and
+  per-slot security/channel state. This split transport is host-tested and
+  fully built, but not yet validated on Wii U hardware.
 
 The current implementation keeps the proven authentication/encryption gate and
 uses the full initialization sequence found in Bloopair and Linux
@@ -302,6 +345,8 @@ controller. Command reply `0x21` can no longer claim a player slot.
 
 Still requires Wii U hardware:
 
+- Incoming A-wake reaching both controller-initiated HID channels.
+- Outgoing SYNC/discovery opening control then interrupt from the host.
 - Paced Device Info and player-LED initialization on an original controller.
 - Continuous compatibility-mode `0x3f` reports and GameCube input.
 - Real stick calibration/range behavior.

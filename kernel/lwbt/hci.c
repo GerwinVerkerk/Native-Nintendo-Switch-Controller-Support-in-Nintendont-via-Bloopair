@@ -1692,6 +1692,13 @@ void hci_event_handler(struct pbuf *p)
 				BTDiagnosticAuthenticationResult(((u8_t*)p->payload)[0],
 					&link->bdaddr);
 			break;
+		case HCI_REMOTE_NAME_REQUEST_COMPLETE:
+			bdaddr = (void*)(((u8_t*)p->payload)+1);
+			BTDiagnosticRemoteNameResult(bdaddr,
+				((u8_t*)p->payload)[0],
+				((u8_t*)p->payload)+7,
+				p->tot_len > 7 ? p->tot_len - 7 : 0);
+			break;
 		case HCI_ENCRYPTION_CHANGE:
 			connhdl = le16toh(R16((u32)((u16_t*)(((u8_t*)p->payload)+1))));
 			for(link=hci_active_links;link!=NULL;link=link->next) {

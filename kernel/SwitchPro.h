@@ -70,6 +70,29 @@ enum SwitchProAckResult {
 	SWITCH_PRO_ACK_NEGATIVE
 };
 
+enum SwitchProConnectionOrigin {
+	SWITCH_PRO_CONNECTION_NONE = 0,
+	SWITCH_PRO_CONNECTION_INCOMING,
+	SWITCH_PRO_CONNECTION_OUTGOING
+};
+
+enum SwitchProTransportState {
+	SWITCH_PRO_TRANSPORT_IDLE = 0,
+	SWITCH_PRO_TRANSPORT_WAIT_ACL,
+	SWITCH_PRO_TRANSPORT_WAIT_SECURITY,
+	SWITCH_PRO_TRANSPORT_WAIT_INCOMING_HID,
+	SWITCH_PRO_TRANSPORT_OPEN_OUTGOING_HID,
+	SWITCH_PRO_TRANSPORT_READY,
+	SWITCH_PRO_TRANSPORT_FAILED
+};
+
+enum SwitchProTransportAction {
+	SWITCH_PRO_TRANSPORT_ACTION_NONE = 0,
+	SWITCH_PRO_TRANSPORT_ACTION_ACCEPT_HID,
+	SWITCH_PRO_TRANSPORT_ACTION_OPEN_HID,
+	SWITCH_PRO_TRANSPORT_ACTION_READY
+};
+
 #define SWITCH_PRO_BTN_UP       0x0001
 #define SWITCH_PRO_BTN_LEFT     0x0002
 #define SWITCH_PRO_BTN_ZR       0x0004
@@ -118,6 +141,17 @@ struct SwitchProInput {
 	u32 buttons;
 };
 
+struct SwitchProTransport {
+	u8 origin;
+	u8 state;
+	u8 authenticated;
+	u8 encrypted;
+	u8 control_open;
+	u8 interrupt_open;
+	u8 identity_confirmed;
+	u8 reserved;
+};
+
 void SwitchProReset(struct SwitchProState *state);
 s32 SwitchProParseReport(struct SwitchProState *state, const u8 *report,
 	u16 len, struct SwitchProInput *input);
@@ -131,5 +165,12 @@ u8 SwitchProInitHandleResponse(struct SwitchProState *state, u8 ack, u8 command,
 u8 SwitchProTrackStreamReport(struct SwitchProState *state, u8 report_id,
 	u8 parsed);
 u8 SwitchProDiagnosticLED(u32 phase, u8 blink_on);
+void SwitchProTransportReset(struct SwitchProTransport *transport);
+void SwitchProTransportBegin(struct SwitchProTransport *transport, u8 origin);
+u8 SwitchProTransportACLReady(struct SwitchProTransport *transport);
+u8 SwitchProTransportSecurityReady(struct SwitchProTransport *transport);
+u8 SwitchProTransportChannelReady(struct SwitchProTransport *transport,
+	u8 control_channel);
+void SwitchProTransportFail(struct SwitchProTransport *transport);
 
 #endif
