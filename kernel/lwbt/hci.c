@@ -1542,6 +1542,7 @@ static void hci_conn_complete_evt(struct pbuf *p)
 
 	bdaddr = (void*)(((u8_t*)p->payload)+3);
 	link = hci_get_link(bdaddr);
+	BTDiagnosticACLResult(bdaddr, ((u8_t*)p->payload)[0]);
 	LOG("hci_conn_complete_evt(%p,%02x - %02x:%02x:%02x:%02x:%02x:%02x)\n",link,((u8_t*)p->payload)[0],bdaddr->addr[0],bdaddr->addr[1],bdaddr->addr[2],bdaddr->addr[3],bdaddr->addr[4],bdaddr->addr[5]);
 	switch(((u8_t*)p->payload)[0]) {
 		case HCI_SUCCESS:

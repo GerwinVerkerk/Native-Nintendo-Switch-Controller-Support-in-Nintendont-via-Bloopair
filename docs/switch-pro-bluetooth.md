@@ -261,6 +261,18 @@ Observed on Wii U hardware:
   produced. The discovery path now retries inquiry at bounded intervals (at
   most twelve attempts) until a Switch target is found, allowing the user to
   enter controller SYNC mode after the game has loaded.
+- Trace 4 showed all bounded inquiries returning zero results. Source review
+  then found that lwBT selected HCI Inquiry Mode `0x01` (results with RSSI,
+  event `0x22`) while its event dispatcher only implemented standard Inquiry
+  Result event `0x02`. The stack now selects Inquiry Mode `0x00`, matching its
+  existing parser.
+- The same trace also showed why an encrypted ACL link did not prove usable
+  HID transport. Nintendont's Wii-family path only registered incoming L2CAP
+  listeners. The Switch-only path now acts as a HID host: it initiates the ACL,
+  waits for authentication and encryption, opens control PSM `0x11` outbound,
+  waits for complete L2CAP configuration, then opens interrupt PSM `0x13`.
+  Every ACL/L2CAP request and result/status is recorded in the bounded binary
+  trace. Wii Remote and Wii U Pro keep the original incoming-listener route.
 
 The current implementation keeps the proven authentication/encryption gate and
 uses the full initialization sequence found in Bloopair and Linux

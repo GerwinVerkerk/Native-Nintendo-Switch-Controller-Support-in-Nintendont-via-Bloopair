@@ -89,6 +89,8 @@ err_t acl_wlp_completed(void *arg,struct bd_addr *bdaddr);
 err_t link_key_not(void *arg,struct bd_addr *bdaddr,u8_t *key);
 err_t pin_req(void *arg,struct bd_addr *bdaddr);
 err_t l2cap_connected(void *arg,struct l2cap_pcb *l2cappcb,u16_t result,u16_t status);
+err_t l2cap_hid_control_connected(void *arg,struct l2cap_pcb *l2cappcb,u16_t result,u16_t status);
+err_t l2cap_hid_data_connected(void *arg,struct l2cap_pcb *l2cappcb,u16_t result,u16_t status);
 err_t l2cap_accepted(void *arg,struct l2cap_pcb *l2cappcb,err_t err);
 err_t acl_conn_complete(void *arg,struct bd_addr *bdaddr);
 err_t l2cap_disconnect_cfm(void *arg, struct l2cap_pcb *pcb);
@@ -220,6 +222,37 @@ static s32 __bte_notify_connected(struct bte_pcb *pcb)
 	if(pcb->conn_cfm != NULL)
 		return pcb->conn_cfm(pcb->cbarg,pcb,ERR_OK);
 	return ERR_OK;
+}
+
+static s32 __bte_start_hid_host(struct bte_pcb *pcb)
+{
+	struct l2cap_pcb *l2capcb;
+	err_t err;
+
+	if(pcb == NULL || !pcb->outgoing_hid || pcb->hid_connect_started)
+		return ERR_OK;
+	if(pcb->require_security && !pcb->security_ready)
+		return ERR_OK;
+
+	pcb->hid_connect_started = 1;
+	if((l2capcb = l2cap_new()) == NULL)
+		return ERR_MEM;
+	l2cap_arg(l2capcb, pcb);
+	BTDiagnosticHIDHostEvent(&pcb->bdaddr, BT_HID_HOST_CONTROL_REQUEST,
+		0, 0);
+	err = l2ca_connect_req(l2capcb, &pcb->bdaddr, HIDP_CONTROL_CHANNEL,
+		0, l2cap_hid_control_connected);
+	if(err != ERR_OK)
+	{
+		BTDiagnosticHIDHostEvent(&pcb->bdaddr,
+			BT_HID_HOST_CONTROL_COMPLETE, err, 0);
+		l2cap_close(l2capcb);
+		pcb->hid_connect_started = 0;
+		pcb->err = ERR_CONN;
+		if(pcb->conn_cfm != NULL)
+			pcb->conn_cfm(pcb->cbarg, pcb, ERR_CONN);
+	}
+	return err;
 }
 
 static s32 __bte_send_request(struct ctrl_req_t *req)
@@ -494,6 +527,8 @@ s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*con
 	pcb->ctl_pcb = NULL;
 	pcb->security_ready = 0;
 	pcb->conn_notified = 0;
+	pcb->outgoing_hid = 0;
+	pcb->hid_connect_started = 0;
 	pcb->conn_cfm = conn_cfm;
 	pcb->state = (u32)STATE_CONNECTING;
 
@@ -525,6 +560,39 @@ s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*con
 
 error:
 	//printf("bte_registerdeviceasync(%02x)\n",err);
+	return err;
+}
+
+s32 bte_registerhidhostasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*conn_cfm)(void *arg,struct bte_pcb *pcb,u8 err))
+{
+	err_t err;
+	if(pcb == NULL || bdaddr == NULL)
+		return ERR_VAL;
+
+	pcb->err = ERR_USE;
+	pcb->data_pcb = NULL;
+	pcb->ctl_pcb = NULL;
+	pcb->security_ready = 0;
+	pcb->conn_notified = 0;
+	pcb->outgoing_hid = 1;
+	pcb->hid_connect_started = 0;
+	pcb->conn_cfm = conn_cfm;
+	pcb->state = (u32)STATE_CONNECTING;
+	bd_addr_set(&pcb->bdaddr, bdaddr);
+
+	BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_ACL_REQUEST, 0,
+		lp_is_connected(bdaddr));
+	if(lp_is_connected(bdaddr))
+	{
+		BTDiagnosticConnectionTarget(bdaddr);
+		return ERR_OK;
+	}
+	err = lp_connect_req(bdaddr, 0);
+	if(err != ERR_OK)
+	{
+		BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_ACL_REQUEST, err, 0);
+		pcb->err = ERR_CONN;
+	}
 	return err;
 }
 
@@ -739,6 +807,8 @@ s32 bte_security_complete(struct bte_pcb *pcb,u8 err)
 		return err;
 	}
 	pcb->security_ready = 1;
+	if(pcb->outgoing_hid)
+		return __bte_start_hid_host(pcb);
 	return __bte_notify_connected(pcb);
 }
 
@@ -861,6 +931,86 @@ err_t l2cap_accepted(void *arg,struct l2cap_pcb *l2cappcb,err_t err)
 	}
 
 	return ERR_OK;
+}
+
+static err_t __bte_hid_host_failed(struct bte_pcb *btepcb,
+	struct l2cap_pcb *l2cappcb, u32 stage, u16_t result, u16_t status)
+{
+	BTDiagnosticHIDHostEvent(&btepcb->bdaddr, stage, result, status);
+	if(btepcb->ctl_pcb == l2cappcb)
+		btepcb->ctl_pcb = NULL;
+	if(btepcb->data_pcb == l2cappcb)
+		btepcb->data_pcb = NULL;
+	l2cap_close(l2cappcb);
+	if(btepcb->ctl_pcb != NULL)
+	{
+		l2cap_close(btepcb->ctl_pcb);
+		btepcb->ctl_pcb = NULL;
+	}
+	if(btepcb->data_pcb != NULL)
+	{
+		l2cap_close(btepcb->data_pcb);
+		btepcb->data_pcb = NULL;
+	}
+	btepcb->err = ERR_CONN;
+	btepcb->hid_connect_started = 0;
+	hci_disconnect(&btepcb->bdaddr, HCI_OTHER_END_TERMINATED_CONN_USER_ENDED);
+	if(btepcb->conn_cfm != NULL)
+		btepcb->conn_cfm(btepcb->cbarg, btepcb, ERR_CONN);
+	return ERR_OK;
+}
+
+err_t l2cap_hid_control_connected(void *arg,struct l2cap_pcb *l2cappcb,
+	u16_t result,u16_t status)
+{
+	struct bte_pcb *btepcb = (struct bte_pcb*)arg;
+	struct l2cap_pcb *datacb;
+	err_t err;
+	if(btepcb == NULL)
+		return ERR_VAL;
+	if(result != L2CAP_CONN_SUCCESS)
+		return __bte_hid_host_failed(btepcb, l2cappcb,
+			BT_HID_HOST_CONTROL_COMPLETE, result, status);
+
+	BTDiagnosticHIDHostEvent(&btepcb->bdaddr,
+		BT_HID_HOST_CONTROL_COMPLETE, result, status);
+	btepcb->ctl_pcb = l2cappcb;
+	l2cap_recv(l2cappcb, bte_process_input);
+	l2cap_disconnect_ind(l2cappcb, l2cap_disconnected_ind);
+
+	if((datacb = l2cap_new()) == NULL)
+		return __bte_hid_host_failed(btepcb, l2cappcb,
+			BT_HID_HOST_INTERRUPT_COMPLETE, ERR_MEM, 0);
+	l2cap_arg(datacb, btepcb);
+	BTDiagnosticHIDHostEvent(&btepcb->bdaddr,
+		BT_HID_HOST_INTERRUPT_REQUEST, 0, 0);
+	err = l2ca_connect_req(datacb, &btepcb->bdaddr, HIDP_DATA_CHANNEL,
+		0, l2cap_hid_data_connected);
+	if(err != ERR_OK)
+	{
+		return __bte_hid_host_failed(btepcb, datacb,
+			BT_HID_HOST_INTERRUPT_COMPLETE, err, 0);
+	}
+	return ERR_OK;
+}
+
+err_t l2cap_hid_data_connected(void *arg,struct l2cap_pcb *l2cappcb,
+	u16_t result,u16_t status)
+{
+	struct bte_pcb *btepcb = (struct bte_pcb*)arg;
+	if(btepcb == NULL)
+		return ERR_VAL;
+	if(result != L2CAP_CONN_SUCCESS)
+		return __bte_hid_host_failed(btepcb, l2cappcb,
+			BT_HID_HOST_INTERRUPT_COMPLETE, result, status);
+
+	BTDiagnosticHIDHostEvent(&btepcb->bdaddr,
+		BT_HID_HOST_INTERRUPT_COMPLETE, result, status);
+	btepcb->data_pcb = l2cappcb;
+	l2cap_recv(l2cappcb, bte_process_input);
+	l2cap_disconnect_ind(l2cappcb, l2cap_disconnected_ind);
+	BTDiagnosticHIDChannelsOpen(&btepcb->bdaddr);
+	return __bte_notify_connected(btepcb);
 }
 
 err_t bte_inquiry_complete(void *arg,struct hci_pcb *pcb,struct hci_inq_res *ires,u16_t result)

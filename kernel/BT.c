@@ -213,7 +213,32 @@ static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr)
 {
 	if(bdaddr != NULL && BTFindSwitchStat(bdaddr) != NULL)
+	{
 		BTDiagnosticSetTarget(bdaddr);
+		/* A HID host initiates authentication on the newly established ACL.
+		 * A missing key will drive SSP; a stored key will be requested normally. */
+		hci_authentication_requested((struct bd_addr*)bdaddr);
+	}
+}
+
+void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result)
+{
+	u32 target = bdaddr != NULL && BTDiagnosticTargetSet &&
+		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
+			sizeof(BTDiagnosticTarget.addr)) == 0;
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_HID_HOST, BT_HID_HOST_ACL_REQUEST,
+		result, target, 0, 0, 0, 0, 0, 0);
+}
+
+void BTDiagnosticHIDHostEvent(const struct bd_addr *bdaddr, u32 stage,
+	u32 result, u32 status)
+{
+	u32 target = bdaddr != NULL && BTDiagnosticTargetSet &&
+		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
+			sizeof(BTDiagnosticTarget.addr)) == 0;
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_HID_HOST, stage, result, status,
+		target, BTDiagnosticAuthenticated, BTDiagnosticEncrypted,
+		0, 0, 0);
 }
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr)
@@ -1185,7 +1210,7 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 		stat->switch_publish_count = 0;
 		stat->switch_led_channel = CHAN_NOT_SET;
 		sync_after_write(stat, sizeof(struct BTPadStat));
-		bte_registerdeviceasync(stat->sock, &stat->bdaddr, BTHandleConnect);
+		bte_registerhidhostasync(stat->sock, &stat->bdaddr, BTHandleConnect);
 	}
 	return ERR_OK;
 }
@@ -1205,7 +1230,10 @@ static int RegisterBTPad(struct BTPadStat *stat, struct bd_addr *_bdaddr)
 	bte_require_security(stat->sock,
 		stat->transfertype == TRANSFER_SWITCH_PRO ? 1 : 0);
 
-	bte_registerdeviceasync(stat->sock, _bdaddr, BTHandleConnect);
+	if(stat->transfertype == TRANSFER_SWITCH_PRO)
+		bte_registerhidhostasync(stat->sock, _bdaddr, BTHandleConnect);
+	else
+		bte_registerdeviceasync(stat->sock, _bdaddr, BTHandleConnect);
 	sync_after_write(stat, sizeof(struct BTPadStat));
 
 	return ERR_OK;
@@ -1265,32 +1293,6 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 			BTPadStatus[i].transfertype = 0x34;
 		BTPadStatus[i].channel = CHAN_NOT_SET;
 		RegisterBTPad(&BTPadStatus[i], &bdaddr);
-	}
-
-	/* vWii SYSCONF does not necessarily contain Bloopair pairings. Register
-	 * stored-key addresses that are not already represented, so a previously
-	 * paired Switch Pro can reconnect without being paired on every launch. */
-	for(i = 0; i < BTKeyCount && count <
-		CONF_PAD_MAX_REGISTERED - switch_found; i++)
-	{
-		u32 j;
-		u8 known = 0;
-		for(j = 0; j < count; j++)
-		{
-			if(memcmp(BTPadStatus[j].bdaddr.addr, BTKeys[i].bdaddr.addr,
-				sizeof(BTKeys[i].bdaddr.addr)) == 0)
-			{
-				known = 1;
-				break;
-			}
-		}
-		if(known)
-			continue;
-		BTDiagnosticSetTarget(&BTKeys[i].bdaddr);
-		BTPadStatus[count].transfertype = TRANSFER_SWITCH_PRO;
-		BTPadStatus[count].channel = CHAN_NOT_SET;
-		RegisterBTPad(&BTPadStatus[count], &BTKeys[i].bdaddr);
-		count++;
 	}
 
 	/* Nintendo Switch Pro Controller class of device: 0x002508. */

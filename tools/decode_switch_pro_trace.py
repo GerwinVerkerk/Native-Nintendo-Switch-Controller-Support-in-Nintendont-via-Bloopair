@@ -20,6 +20,7 @@ EVENT_NAMES = {
     7: "ARM_CHANNEL",
     8: "ARM_SELFTEST",
     9: "ARM_INQUIRY",
+    10: "ARM_HID_HOST",
     0x100: "PPC_READ",
     0x101: "PPC_PAD",
 }

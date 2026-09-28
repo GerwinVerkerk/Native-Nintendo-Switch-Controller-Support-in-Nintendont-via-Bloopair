@@ -110,6 +110,8 @@ struct bte_pcb
 	u8 require_security;
 	u8 security_ready;
 	u8 conn_notified;
+	u8 outgoing_hid;
+	u8 hid_connect_started;
 
 
 	s32 (*recv)(void *arg,void *buffer,u16 len);
@@ -137,6 +139,7 @@ void bte_require_security(struct bte_pcb *pcb,u8 required);
 s32 bte_security_complete(struct bte_pcb *pcb,u8 err);
 
 s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*conn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
+s32 bte_registerhidhostasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*conn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
 
 s32 bte_disconnect(struct bte_pcb *pcb);
 

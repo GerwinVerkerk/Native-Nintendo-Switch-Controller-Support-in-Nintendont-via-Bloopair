@@ -39,6 +39,12 @@ void BTTraceDumpToFile(void);
 #define BT_DIAG_AUTH_REQUESTED   11
 #define BT_DIAG_PPC_SELFTEST     12
 
+#define BT_HID_HOST_ACL_REQUEST       1
+#define BT_HID_HOST_CONTROL_REQUEST   2
+#define BT_HID_HOST_CONTROL_COMPLETE  3
+#define BT_HID_HOST_INTERRUPT_REQUEST 4
+#define BT_HID_HOST_INTERRUPT_COMPLETE 5
+
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
 void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key);
@@ -50,6 +56,9 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr);
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr);
 void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr);
+void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result);
+void BTDiagnosticHIDHostEvent(const struct bd_addr *bdaddr, u32 stage,
+	u32 result, u32 status);
 
 struct BTPadStat {
 	u32 controller;
