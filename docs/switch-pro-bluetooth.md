@@ -154,9 +154,12 @@ selected raw HID reports, parser output, channel assignment and `BTPadCont`
 publication. PPC records changes observed in `BTPadCont` and the resulting
 GameCube `PADStatus`.
 
-Nothing is written to storage while the game is running. After a normal game
-exit, once disc I/O has stopped, the kernel writes the two 4096-byte regions in
-one bounded operation to `/switch-pro-trace.bin` on the active game volume.
+Nothing is written during the 90-second capture window. Ninety seconds after
+the first Switch trace event, the kernel writes the two 4096-byte regions once
+to `/switch-pro-trace.bin` on the active game volume. If that bounded write
+fails, it retries at most twice at five-second intervals. A normal game exit
+still performs the same one-shot write as a fallback, but is no longer required
+to retrieve a useful trace.
 Decode it on a development host with:
 
 ```sh
@@ -164,10 +167,10 @@ python3 tools/decode_switch_pro_trace.py switch-pro-trace.bin
 ```
 
 For a useful capture, connect the Switch Pro, wait for its fixed player LED,
-press A/B/X/Y separately, move both sticks through their range, then exit
-Nintendont normally with a known-working GameCube controller. Retrieve the
-trace file only after the return to the loader/menu. The LED diagnostics are
-not part of interpreting this trace.
+press A/B/X/Y separately and move both sticks through their range. Then wait at
+least 100 seconds from the first connection attempt before powering the console
+off. On the next boot, retrieve `/switch-pro-trace.bin` through FTP. The LED
+diagnostics are not part of interpreting this trace.
 
 Record pass/fail and any LED behavior for every step:
 

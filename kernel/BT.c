@@ -70,6 +70,15 @@ static struct SwitchProTraceBuffer *SwitchPpcTrace =
 	(struct SwitchProTraceBuffer*)SWITCH_PRO_TRACE_PPC_ADDR;
 static struct SwitchProInput SwitchTraceLastInput;
 static u8 SwitchTraceLastInputValid = 0;
+static u32 SwitchTraceCaptureTimer = 0;
+static u32 SwitchTraceDumpRetryTimer = 0;
+static u8 SwitchTraceCaptureStarted = 0;
+static u8 SwitchTraceDumpComplete = 0;
+static u8 SwitchTraceDumpAttempts = 0;
+
+#define SWITCH_TRACE_AUTO_DUMP_SECONDS 90
+#define SWITCH_TRACE_DUMP_RETRY_SECONDS 5
+#define SWITCH_TRACE_DUMP_MAX_ATTEMPTS 3
 
 static vu32* BTMotor = (u32*)0x13003040;
 static vu32* BTPadFree = (u32*)0x13003050;
@@ -123,6 +132,11 @@ static void BTSwitchTraceArm(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e,
 {
 	u32 index = SwitchArmTrace->count;
 	struct SwitchProTraceEvent *event;
+	if(type != SWITCH_TRACE_ARM_INIT && !SwitchTraceCaptureStarted)
+	{
+		SwitchTraceCaptureStarted = 1;
+		SwitchTraceCaptureTimer = read32(HW_TIMER);
+	}
 	if(index >= SWITCH_PRO_TRACE_EVENTS)
 	{
 		SwitchArmTrace->dropped++;
@@ -1353,6 +1367,11 @@ void BTInit(void)
 	sync_after_write(SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE);
 	memset(&SwitchTraceLastInput, 0, sizeof(SwitchTraceLastInput));
 	SwitchTraceLastInputValid = 0;
+	SwitchTraceCaptureTimer = 0;
+	SwitchTraceDumpRetryTimer = 0;
+	SwitchTraceCaptureStarted = 0;
+	SwitchTraceDumpComplete = 0;
+	SwitchTraceDumpAttempts = 0;
 	memset(BTKeys, 0, sizeof(struct linkkey_info) * CONF_PAD_MAX_REGISTERED);
 
 	memset(BTPad, 0, sizeof(struct BTPadCont)*4);
@@ -1375,27 +1394,58 @@ void BTInit(void)
 	}
 }
 
-void BTTraceDumpToFile(void)
+static u8 BTSwitchTraceWriteFile(void)
 {
 	FIL trace;
 	u32 wrote;
 	if(SwitchArmTrace->magic != SWITCH_PRO_TRACE_MAGIC ||
 		SwitchArmTrace->count == 0)
-		return;
+		return 0;
 	sync_before_read(SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE);
 	if(f_open_char(&trace, "/switch-pro-trace.bin",
 		FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
-		return;
+		return 0;
 	wrote = 0;
 	if(f_write(&trace, SwitchArmTrace, SWITCH_PRO_TRACE_REGION_SIZE,
 		&wrote) != FR_OK || wrote != SWITCH_PRO_TRACE_REGION_SIZE)
 	{
 		f_close(&trace);
-		return;
+		return 0;
 	}
 	wrote = 0;
-	f_write(&trace, SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE, &wrote);
+	if(f_write(&trace, SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE,
+		&wrote) != FR_OK || wrote != SWITCH_PRO_TRACE_REGION_SIZE)
+	{
+		f_close(&trace);
+		return 0;
+	}
 	f_close(&trace);
+	return 1;
+}
+
+void BTTraceDumpToFile(void)
+{
+	if(SwitchTraceDumpComplete)
+		return;
+	if(BTSwitchTraceWriteFile())
+		SwitchTraceDumpComplete = 1;
+}
+
+static void BTSwitchTraceAutoDumpUpdate(void)
+{
+	if(!SwitchTraceCaptureStarted || SwitchTraceDumpComplete ||
+		SwitchTraceDumpAttempts >= SWITCH_TRACE_DUMP_MAX_ATTEMPTS ||
+		TimerDiffSeconds(SwitchTraceCaptureTimer) <
+			SWITCH_TRACE_AUTO_DUMP_SECONDS)
+		return;
+	if(SwitchTraceDumpAttempts &&
+		TimerDiffSeconds(SwitchTraceDumpRetryTimer) <
+			SWITCH_TRACE_DUMP_RETRY_SECONDS)
+		return;
+	SwitchTraceDumpAttempts++;
+	SwitchTraceDumpRetryTimer = read32(HW_TIMER);
+	if(BTSwitchTraceWriteFile())
+		SwitchTraceDumpComplete = 1;
 }
 
 void BTUpdateRegisters(void)
@@ -1588,4 +1638,5 @@ void BTUpdateRegisters(void)
 		l2cap_tmr(); //every second
 		BTTimer = read32(HW_TIMER);
 	}
+	BTSwitchTraceAutoDumpUpdate();
 }
