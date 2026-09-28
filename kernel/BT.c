@@ -76,7 +76,7 @@ static u8 SwitchTraceCaptureStarted = 0;
 static u8 SwitchTraceDumpComplete = 0;
 static u8 SwitchTraceDumpAttempts = 0;
 
-#define SWITCH_TRACE_AUTO_DUMP_SECONDS 90
+#define SWITCH_TRACE_AUTO_DUMP_SECONDS 120
 #define SWITCH_TRACE_DUMP_RETRY_SECONDS 5
 #define SWITCH_TRACE_DUMP_MAX_ATTEMPTS 3
 
@@ -132,11 +132,6 @@ static void BTSwitchTraceArm(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e,
 {
 	u32 index = SwitchArmTrace->count;
 	struct SwitchProTraceEvent *event;
-	/* The Wii Remote path also produces authentication/encryption callbacks.
-	 * Ignore those until BTDiagnosticSetTarget identifies a Switch Pro; otherwise
-	 * they can start and finish the timed capture before the controller test. */
-	if(type != SWITCH_TRACE_ARM_INIT && !SwitchTraceCaptureStarted)
-		return;
 	if(index >= SWITCH_PRO_TRACE_EVENTS)
 	{
 		SwitchArmTrace->dropped++;
@@ -197,13 +192,8 @@ static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 	BTDiagnosticTarget = *bdaddr;
 	BTDiagnosticTargetSet = 1;
 	BTDiagnosticStage = BT_DIAG_FOUND;
-	if(!SwitchTraceCaptureStarted)
-	{
-		SwitchTraceCaptureStarted = 1;
-		SwitchTraceCaptureTimer = read32(HW_TIMER);
-		BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, BT_DIAG_FOUND,
-			0, 0, 0, 0, 0, 0, 0, 0);
-	}
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, BT_DIAG_FOUND,
+		0, 0, 0, 0, 0, 0, 0, 0);
 	BTDiagnosticAuthenticated = 0;
 	BTDiagnosticEncrypted = 0;
 	BTDiagnosticLinkKeyValid = 0;
@@ -1218,7 +1208,7 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 	struct inquiry_info_ex info[CONF_PAD_MAX_REGISTERED];
 	struct bd_addr bdaddr;
 	s32 found = 0;
-	u32 i, count;
+	u32 i, count, cod;
 	u8 switch_found = 0;
 
 	if(result == ERR_OK)
@@ -1231,6 +1221,15 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 			switch_found = 1;
 			break;
 		}
+	}
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_INQUIRY, result, found, BTKeyCount,
+		BTDevices->num_registered, switch_found, 0, 0, 0, 0);
+	for(i = 0; i < (u32)found && i < 4; i++)
+	{
+		cod = ((u32)info[i].cod[0] << 16) |
+			((u32)info[i].cod[1] << 8) | info[i].cod[2];
+		BTSwitchTraceArm(SWITCH_TRACE_ARM_INQUIRY, i, cod,
+			cod == 0x082500, 0, 0, 0, 0, 0, 0);
 	}
 
 	count = BTDevices->num_registered;
@@ -1374,9 +1373,9 @@ void BTInit(void)
 	sync_after_write(SwitchPpcTrace, SWITCH_PRO_TRACE_REGION_SIZE);
 	memset(&SwitchTraceLastInput, 0, sizeof(SwitchTraceLastInput));
 	SwitchTraceLastInputValid = 0;
-	SwitchTraceCaptureTimer = 0;
+	SwitchTraceCaptureTimer = read32(HW_TIMER);
 	SwitchTraceDumpRetryTimer = 0;
-	SwitchTraceCaptureStarted = 0;
+	SwitchTraceCaptureStarted = 1;
 	SwitchTraceDumpComplete = 0;
 	SwitchTraceDumpAttempts = 0;
 	memset(BTKeys, 0, sizeof(struct linkkey_info) * CONF_PAD_MAX_REGISTERED);
