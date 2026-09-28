@@ -636,3 +636,8 @@ u8 SwitchProSlotAction(u8 occupied, u8 is_switch_pro)
 		return SWITCH_PRO_SLOT_REUSE;
 	return SWITCH_PRO_SLOT_PROMOTE;
 }
+
+u8 SwitchProAuthenticationShouldRetry(u8 result, u8 retry_done)
+{
+	return result == SWITCH_PRO_HCI_KEY_MISSING && !retry_done;
+}

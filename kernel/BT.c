@@ -224,6 +224,15 @@ static struct BTPadStat *BTPrepareSwitchSlot(const struct bd_addr *bdaddr,
 	stat->transfertype = TRANSFER_SWITCH_PRO;
 	stat->bdaddr = *bdaddr;
 	SwitchProTransportBegin(&stat->switch_transport, origin);
+	if(origin == SWITCH_PRO_CONNECTION_OUTGOING)
+	{
+		/* SYNC/discovery denotes a fresh bond.  A cached vWii key for the
+		 * same address may belong to an older host pairing and must not be
+		 * offered before SSP has a chance to create a replacement key. */
+		stat->switch_force_new_pairing = 1;
+		stat->switch_pairing_retry_done = 0;
+		stat->switch_link_key_valid = 0;
+	}
 	BTDiagnosticSetTarget(bdaddr);
 	if(stat->sock == NULL)
 		RegisterBTPad(stat, (struct bd_addr*)bdaddr);
@@ -416,6 +425,7 @@ void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
 	{
 		memcpy(stat->switch_link_key, key, sizeof(stat->switch_link_key));
 		stat->switch_link_key_valid = 1;
+		stat->switch_force_new_pairing = 0;
 	}
 	if(BTDiagnosticTargetSet &&
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
@@ -433,6 +443,8 @@ u8 BTDiagnosticGetLinkKey(const struct bd_addr *bdaddr, u8 *key)
 	if(bdaddr == NULL || key == NULL)
 		return 0;
 	stat = BTFindSwitchStat(bdaddr);
+	if(stat != NULL && stat->switch_force_new_pairing)
+		return 0;
 	if(stat != NULL && stat->switch_link_key_valid)
 	{
 		memcpy(key, stat->switch_link_key, sizeof(stat->switch_link_key));
@@ -498,6 +510,24 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 		result, target, 0, 0, 0, 0, 0, 0);
 	if(stat == NULL)
 		return;
+	if(SwitchProAuthenticationShouldRetry(result,
+		stat->switch_pairing_retry_done))
+	{
+		/* The remote rejected a stale host key.  Retry authentication once;
+		 * BTDiagnosticGetLinkKey() will now send a negative reply, which
+		 * starts the SSP sequence and replaces only this controller's key. */
+		stat->switch_pairing_retry_done = 1;
+		stat->switch_force_new_pairing = 1;
+		stat->switch_link_key_valid = 0;
+		if(target)
+		{
+			BTDiagnosticLinkKeyValid = 0;
+			BTDiagnosticHIDHostEvent(bdaddr,
+				BT_HID_HOST_PAIRING_RETRY, result, 0);
+		}
+		hci_authentication_requested((struct bd_addr*)bdaddr);
+		return;
+	}
 	if(result != HCI_SUCCESS)
 	{
 		if(target)

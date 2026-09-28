@@ -93,6 +93,8 @@ enum SwitchProTransportAction {
 	SWITCH_PRO_TRANSPORT_ACTION_READY
 };
 
+#define SWITCH_PRO_HCI_KEY_MISSING 0x06
+
 #define SWITCH_PRO_BTN_UP       0x0001
 #define SWITCH_PRO_BTN_LEFT     0x0002
 #define SWITCH_PRO_BTN_ZR       0x0004
@@ -177,5 +179,6 @@ u8 SwitchProTransportChannelReady(struct SwitchProTransport *transport,
 	u8 control_channel);
 void SwitchProTransportFail(struct SwitchProTransport *transport);
 u8 SwitchProSlotAction(u8 occupied, u8 is_switch_pro);
+u8 SwitchProAuthenticationShouldRetry(u8 result, u8 retry_done);
 
 #endif

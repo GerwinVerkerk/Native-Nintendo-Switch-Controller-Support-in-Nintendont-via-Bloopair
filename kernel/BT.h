@@ -52,6 +52,7 @@ void BTTraceDumpToFile(void);
 #define BT_HID_HOST_REMOTE_NAME       11
 #define BT_HID_HOST_TRANSPORT_READY   12
 #define BT_HID_HOST_SLOT_PROMOTED     13
+#define BT_HID_HOST_PAIRING_RETRY     14
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
@@ -102,6 +103,8 @@ struct BTPadStat {
 	u8 switch_link_key[16];
 	u8 switch_link_key_valid;
 	u8 switch_link_key_store_pending;
+	u8 switch_force_new_pairing;
+	u8 switch_pairing_retry_done;
 	u8 switch_remote_name_requested;
 	u8 switch_remote_name_verified;
 } ALIGNED(32);

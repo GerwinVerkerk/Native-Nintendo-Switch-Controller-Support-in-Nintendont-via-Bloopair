@@ -433,6 +433,16 @@ static void test_existing_non_switch_slot_is_promoted(void)
 	assert(SwitchProSlotAction(1, 0) == SWITCH_PRO_SLOT_PROMOTE);
 }
 
+static void test_stale_link_key_retries_pairing_once(void)
+{
+	assert(SwitchProAuthenticationShouldRetry(
+		SWITCH_PRO_HCI_KEY_MISSING, 0) == 1);
+	assert(SwitchProAuthenticationShouldRetry(
+		SWITCH_PRO_HCI_KEY_MISSING, 1) == 0);
+	assert(SwitchProAuthenticationShouldRetry(0, 0) == 0);
+	assert(SwitchProAuthenticationShouldRetry(5, 0) == 0);
+}
+
 int main(void)
 {
 	test_full_report();
@@ -450,6 +460,7 @@ int main(void)
 	test_transport_rejects_wrong_order();
 	test_incoming_channels_may_arrive_before_security();
 	test_existing_non_switch_slot_is_promoted();
+	test_stale_link_key_retries_pairing_once();
 	puts("switch_pro tests: ok");
 	return 0;
 }
