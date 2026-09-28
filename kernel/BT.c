@@ -1518,12 +1518,23 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 	for(i = 0; i < (u32)found && count < CONF_PAD_MAX_REGISTERED; i++)
 	{
 		struct BTPadStat *known;
+		u8 slot_action;
 		if(info[i].cod[0] != 0x08 || info[i].cod[1] != 0x25 || info[i].cod[2] != 0x00)
 			continue;
 		known = BTFindRegisteredStat(&info[i].bdaddr);
+		slot_action = SwitchProSlotAction(known != NULL,
+			known != NULL && known->transfertype == TRANSFER_SWITCH_PRO);
 		if(known != NULL)
 		{
-			if(known->transfertype == TRANSFER_SWITCH_PRO)
+			if(slot_action == SWITCH_PRO_SLOT_PROMOTE)
+			{
+				u32 slot = known - BTPadStatus;
+				BTDiagnosticHIDHostEvent(&info[i].bdaddr,
+					BT_HID_HOST_SLOT_PROMOTED, known->transfertype, slot);
+				known = BTPrepareSwitchSlot(&info[i].bdaddr,
+					SWITCH_PRO_CONNECTION_OUTGOING);
+			}
+			else if(slot_action == SWITCH_PRO_SLOT_REUSE)
 			{
 				BTDiagnosticSetTarget(&info[i].bdaddr);
 				BTDiagnosticHIDHostEvent(&info[i].bdaddr,

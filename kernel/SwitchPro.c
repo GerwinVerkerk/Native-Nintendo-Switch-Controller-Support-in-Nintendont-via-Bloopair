@@ -627,3 +627,12 @@ void SwitchProTransportFail(struct SwitchProTransport *transport)
 {
 	transport->state = SWITCH_PRO_TRANSPORT_FAILED;
 }
+
+u8 SwitchProSlotAction(u8 occupied, u8 is_switch_pro)
+{
+	if(!occupied)
+		return SWITCH_PRO_SLOT_CREATE;
+	if(is_switch_pro)
+		return SWITCH_PRO_SLOT_REUSE;
+	return SWITCH_PRO_SLOT_PROMOTE;
+}

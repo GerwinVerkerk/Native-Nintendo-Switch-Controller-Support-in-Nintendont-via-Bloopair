@@ -152,6 +152,10 @@ struct SwitchProTransport {
 	u8 reserved;
 };
 
+#define SWITCH_PRO_SLOT_CREATE  1
+#define SWITCH_PRO_SLOT_REUSE   2
+#define SWITCH_PRO_SLOT_PROMOTE 3
+
 void SwitchProReset(struct SwitchProState *state);
 s32 SwitchProParseReport(struct SwitchProState *state, const u8 *report,
 	u16 len, struct SwitchProInput *input);
@@ -172,5 +176,6 @@ u8 SwitchProTransportSecurityReady(struct SwitchProTransport *transport);
 u8 SwitchProTransportChannelReady(struct SwitchProTransport *transport,
 	u8 control_channel);
 void SwitchProTransportFail(struct SwitchProTransport *transport);
+u8 SwitchProSlotAction(u8 occupied, u8 is_switch_pro);
 
 #endif

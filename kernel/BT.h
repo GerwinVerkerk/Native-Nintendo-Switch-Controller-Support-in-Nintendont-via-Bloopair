@@ -51,6 +51,7 @@ void BTTraceDumpToFile(void);
 #define BT_HID_HOST_INCOMING_LISTEN   10
 #define BT_HID_HOST_REMOTE_NAME       11
 #define BT_HID_HOST_TRANSPORT_READY   12
+#define BT_HID_HOST_SLOT_PROMOTED     13
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);

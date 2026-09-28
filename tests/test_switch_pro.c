@@ -426,6 +426,13 @@ static void test_incoming_channels_may_arrive_before_security(void)
 	assert(transport.state == SWITCH_PRO_TRANSPORT_READY);
 }
 
+static void test_existing_non_switch_slot_is_promoted(void)
+{
+	assert(SwitchProSlotAction(0, 0) == SWITCH_PRO_SLOT_CREATE);
+	assert(SwitchProSlotAction(1, 1) == SWITCH_PRO_SLOT_REUSE);
+	assert(SwitchProSlotAction(1, 0) == SWITCH_PRO_SLOT_PROMOTE);
+}
+
 int main(void)
 {
 	test_full_report();
@@ -442,6 +449,7 @@ int main(void)
 	test_outgoing_transport_sequence();
 	test_transport_rejects_wrong_order();
 	test_incoming_channels_may_arrive_before_security();
+	test_existing_non_switch_slot_is_promoted();
 	puts("switch_pro tests: ok");
 	return 0;
 }
