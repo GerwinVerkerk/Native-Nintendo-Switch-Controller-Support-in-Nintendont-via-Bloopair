@@ -215,6 +215,47 @@ void changeToDefaultDrive()
 	f_chdir_char("/");
 }
 
+/* Temporary recovery helper for the hardware trace build. The kernel writes
+ * the trace to the active game device, which is USB for this test setup, while
+ * FTPiiU can only expose the SD card. Copy an exact trace snapshot to SD when
+ * both devices are available; leave the USB source untouched. */
+static void CopySwitchProTraceToSd(void)
+{
+	FIL source;
+	FIL destination;
+	void *buffer;
+	UINT read = 0;
+	UINT wrote = 0;
+
+	if(!devices[DEV_SD] || !devices[DEV_USB])
+		return;
+	if(f_open_char(&source, "usb:/switch-pro-trace.bin",
+		FA_READ | FA_OPEN_EXISTING) != FR_OK)
+		return;
+	if(f_size(&source) != 8192)
+	{
+		f_close(&source);
+		return;
+	}
+	buffer = memalign(32, 8192);
+	if(!buffer)
+	{
+		f_close(&source);
+		return;
+	}
+	if(f_read(&source, buffer, 8192, &read) == FR_OK && read == 8192 &&
+		f_open_char(&destination, "sd:/switch-pro-trace.bin",
+			FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
+	{
+		if(f_write(&destination, buffer, 8192, &wrote) == FR_OK &&
+			wrote == 8192)
+			FlushDevices();
+		f_close(&destination);
+	}
+	f_close(&source);
+	free(buffer);
+}
+
 /**
  * Get multi-game and region code information.
  * @param CurDICMD	[in] DI command. (0 == disc image, DIP_CMD_NORMAL == GameCube disc, DIP_CMD_DVDR == DVD-R)
@@ -766,6 +807,7 @@ int main(int argc, char **argv)
 		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, 232, "No FAT device found!");
 		ExitToLoader(1);
 	}
+	CopySwitchProTraceToSd();
 	// Seems like some programs start without any args
 	if(argc > 0 && argv != NULL && argv[0] != NULL)
 	{

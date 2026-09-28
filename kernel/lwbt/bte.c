@@ -411,7 +411,13 @@ s32 BTE_InitSub(btecallback cb)
 	btstate.hci_cmddone = 0;
 	hci_arg(&btstate);
 	hci_cmd_complete(bte_hci_initsub_complete);
-	hci_write_inquiry_mode(0x01);
+	/* lwBT only decodes the legacy HCI_INQUIRY_RESULT event (0x02).
+	 * Inquiry mode 0x01 makes the controller emit
+	 * HCI_INQUIRY_RESULT_WITH_RSSI (0x22), which this stack silently ignores
+	 * and consequently reports every inquiry as empty.  Standard inquiry mode
+	 * still provides the address, scan parameters and class of device needed
+	 * for Switch Pro discovery. */
+	hci_write_inquiry_mode(0x00);
 
 	return ERR_OK;
 }
@@ -1010,7 +1016,7 @@ err_t bte_hci_initcore_complete(void *arg,struct hci_pcb *pcb,u8_t ogf,u8_t ocf,
 			} else if(ocf==HCI_READ_LOCAL_FEATURES) {
 				if(result==HCI_SUCCESS) {
 					hci_cmd_complete(bte_hci_initcore_complete2);
-					hci_write_inquiry_mode(0x01);
+					hci_write_inquiry_mode(0x00);
 				} else
 					err = ERR_CONN;
 			}
