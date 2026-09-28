@@ -123,8 +123,9 @@ static const u8 LEDState[] = { 0x10, 0x20, 0x40, 0x80, 0xF0 };
 #define SWITCH_DIAG_ENCRYPTED       (1<<1)
 #define SWITCH_DIAG_PROTOCOL_STARTED (1<<2)
 #define SWITCH_PRO_TIMER_TICKS_PER_MS 1898
-#define SWITCH_INQUIRY_RETRY_SECONDS 2
-#define SWITCH_INQUIRY_MAX_ATTEMPTS 12
+#define SWITCH_INITIAL_PAGE_WINDOW_SECONDS 30
+#define SWITCH_INQUIRY_PAGE_WINDOW_SECONDS 10
+#define SWITCH_INQUIRY_MAX_ATTEMPTS 6
 static const s8 DEADZONE = 0x1A;
 
 static u32 SwitchInquiryRetryTimer;
@@ -1564,9 +1565,14 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 	if(result == ERR_OK)
 	{
 		BTRegisterPersistentPads();
-		SwitchInquiryActive = 1;
-		SwitchInquiryAttempts = 1;
-		BTE_InquiryAsync(CONF_PAD_MAX_REGISTERED, BTPairInquiryCB);
+		/* Inquiry and page scan share the same Classic Bluetooth radio.  A
+		 * continuous series of inquiries starves the incoming A-wake route:
+		 * the controller pages the host while the host is busy in inquiry.
+		 * Keep a page-scan-only window first, then alternate bounded inquiry
+		 * rounds with long page-scan windows. */
+		SwitchInquiryRetryTimer = read32(HW_TIMER);
+		SwitchInquiryActive = 0;
+		SwitchInquiryAttempts = 0;
 	}
 	return ERR_OK;
 }
@@ -1906,14 +1912,16 @@ void BTUpdateRegisters(void)
 		l2cap_tmr(); //every second
 		BTTimer = read32(HW_TIMER);
 	}
-	/* The initial inquiry normally finishes while the game is still loading.
-	 * Keep a bounded discovery window open so a user can put an unregistered
-	 * Switch Pro Controller in SYNC mode after gameplay becomes visible. */
+	/* Inquiry and incoming page scan cannot be relied on concurrently on this
+	 * controller.  Prefer the stored-key A-wake route for the initial window;
+	 * between discovery rounds return to page scan long enough for an incoming
+	 * controller to page the host. */
 	if(!SwitchInquiryTargetFound && !SwitchInquiryActive &&
-		SwitchInquiryAttempts > 0 &&
 		SwitchInquiryAttempts < SWITCH_INQUIRY_MAX_ATTEMPTS &&
 		TimerDiffSeconds(SwitchInquiryRetryTimer) >=
-			SWITCH_INQUIRY_RETRY_SECONDS)
+			(SwitchInquiryAttempts == 0 ?
+				SWITCH_INITIAL_PAGE_WINDOW_SECONDS :
+				SWITCH_INQUIRY_PAGE_WINDOW_SECONDS))
 	{
 		SwitchInquiryActive = 1;
 		SwitchInquiryAttempts++;
