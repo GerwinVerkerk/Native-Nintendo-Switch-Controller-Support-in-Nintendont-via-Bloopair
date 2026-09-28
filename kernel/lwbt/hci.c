@@ -1514,6 +1514,7 @@ static void hci_conn_request_evt(struct pbuf *p)
 	bdaddr = (void*)((u8_t*)p->payload);
 	cod = (((u8_t*)p->payload)+6);
 	link_type = *(((u8_t*)p->payload)+9);
+	BTDiagnosticIncomingConnectionRequest(bdaddr, cod);
 
 	HCI_EVENT_CONN_REQ(hci_dev,bdaddr,cod,link_type,ret);
 	if(ret==ERR_OK) {

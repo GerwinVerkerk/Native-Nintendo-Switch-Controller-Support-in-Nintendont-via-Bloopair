@@ -282,6 +282,14 @@ Observed on Wii U hardware:
   devices once, deduplicates inquiry results by address, reuses a single
   Switch slot, tracks pending/established ACL state and makes page timeout
   retryable. This combined correction is not yet hardware-validated.
+- The follow-up trace from build `8a524e5` explained why the controller could
+  wake with A yet never enter the Switch state machine: an already paired Pro
+  Controller connects inbound and is not discoverable in inquiry. The ACL and
+  encryption events therefore had no known Switch target. The HCI Connection
+  Request handler now identifies Class of Device `0x002508`, records the
+  incoming address, creates one persistent Switch slot when the ACL completes,
+  and then runs the same authentication, encryption and outbound HID control/
+  interrupt sequence used by the discovery path.
 
 The current implementation keeps the proven authentication/encryption gate and
 uses the full initialization sequence found in Bloopair and Linux

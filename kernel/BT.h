@@ -47,6 +47,7 @@ void BTTraceDumpToFile(void);
 #define BT_HID_HOST_SLOT_REUSED        6
 #define BT_HID_HOST_SLOT_CREATED       7
 #define BT_HID_HOST_ACL_RETRY          8
+#define BT_HID_HOST_INCOMING_REQUEST   9
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
@@ -59,6 +60,8 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr);
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr);
 void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr);
+void BTDiagnosticIncomingConnectionRequest(const struct bd_addr *bdaddr,
+	const u8 *cod);
 void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result);
 void BTDiagnosticHIDHostEvent(const struct bd_addr *bdaddr, u32 stage,
 	u32 result, u32 status);

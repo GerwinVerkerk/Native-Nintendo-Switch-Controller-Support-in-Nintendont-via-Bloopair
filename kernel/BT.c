@@ -131,6 +131,8 @@ static u32 SwitchInquiryRetryTimer;
 static u8 SwitchInquiryActive;
 static u8 SwitchInquiryAttempts;
 static u8 SwitchInquiryTargetFound;
+static struct bd_addr SwitchIncomingTarget;
+static u8 SwitchIncomingTargetSet;
 static u8 BTPadRegistrationInitialized;
 static u8 BTPadRegisteredCount;
 
@@ -186,6 +188,8 @@ static struct BTPadStat *BTFindSwitchStat(const struct bd_addr *bdaddr)
 	return NULL;
 }
 
+static int RegisterBTPad(struct BTPadStat *stat, struct bd_addr *_bdaddr);
+
 static struct BTPadStat *BTFindRegisteredStat(const struct bd_addr *bdaddr)
 {
 	u32 i;
@@ -230,13 +234,44 @@ static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 
 void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr)
 {
-	if(bdaddr != NULL && BTFindSwitchStat(bdaddr) != NULL)
+	struct BTPadStat *stat;
+	if(bdaddr == NULL)
+		return;
+	stat = BTFindSwitchStat(bdaddr);
+	if(stat == NULL && SwitchIncomingTargetSet &&
+		memcmp(SwitchIncomingTarget.addr, bdaddr->addr,
+			sizeof(SwitchIncomingTarget.addr)) == 0 &&
+		BTPadRegisteredCount < CONF_PAD_MAX_REGISTERED)
+	{
+		u32 slot = BTPadRegisteredCount++;
+		BTPadStatus[slot].transfertype = TRANSFER_SWITCH_PRO;
+		BTPadStatus[slot].channel = CHAN_NOT_SET;
+		BTDiagnosticSetTarget(bdaddr);
+		SwitchIncomingTargetSet = 0;
+		RegisterBTPad(&BTPadStatus[slot], (struct bd_addr*)bdaddr);
+		BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_SLOT_CREATED, 0, slot);
+		return;
+	}
+	if(stat != NULL)
 	{
 		BTDiagnosticSetTarget(bdaddr);
 		/* A HID host initiates authentication on the newly established ACL.
 		 * A missing key will drive SSP; a stored key will be requested normally. */
 		hci_authentication_requested((struct bd_addr*)bdaddr);
 	}
+}
+
+void BTDiagnosticIncomingConnectionRequest(const struct bd_addr *bdaddr,
+	const u8 *cod)
+{
+	if(bdaddr == NULL || cod == NULL)
+		return;
+	BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_INCOMING_REQUEST,
+		((u32)cod[0] << 16) | ((u32)cod[1] << 8) | cod[2], 0);
+	if(cod[0] != 0x08 || cod[1] != 0x25 || cod[2] != 0x00)
+		return;
+	SwitchIncomingTarget = *bdaddr;
+	SwitchIncomingTargetSet = 1;
 }
 
 void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result)
@@ -1415,6 +1450,7 @@ void BTInit(void)
 	SwitchInquiryActive = 0;
 	SwitchInquiryAttempts = 0;
 	SwitchInquiryTargetFound = 0;
+	SwitchIncomingTargetSet = 0;
 	BTPadRegistrationInitialized = 0;
 	BTPadRegisteredCount = 0;
 	BTDiagnosticStage = 0;
