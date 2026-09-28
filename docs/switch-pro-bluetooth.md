@@ -154,8 +154,8 @@ selected raw HID reports, parser output, channel assignment and `BTPadCont`
 publication. PPC records changes observed in `BTPadCont` and the resulting
 GameCube `PADStatus`.
 
-Nothing is written during the 90-second capture window. Ninety seconds after
-the first Switch trace event, the kernel writes the two 4096-byte regions once
+Nothing is written during the 120-second capture window. At 120 seconds after
+kernel startup, the kernel writes the two 4096-byte regions once
 to `/switch-pro-trace.bin` on the active game volume. If that bounded write
 fails, it retries at most twice at five-second intervals. A normal game exit
 still performs the same one-shot write as a fallback, but is no longer required
@@ -168,7 +168,7 @@ python3 tools/decode_switch_pro_trace.py switch-pro-trace.bin
 
 For a useful capture, connect the Switch Pro, wait for its fixed player LED,
 press A/B/X/Y separately and move both sticks through their range. Then wait at
-least 100 seconds from the first connection attempt before powering the console
+least 150 seconds from the first connection attempt before powering the console
 off. On the next boot, retrieve `/switch-pro-trace.bin` through FTP. The LED
 diagnostics are not part of interpreting this trace.
 
@@ -254,6 +254,13 @@ Observed on Wii U hardware:
   ARM-to-PPC/GameCube-pad boundary. The next build therefore uses the complete
   Bloopair-style `0x30` sequence and instruments both sides of that boundary in
   RAM.
+- Trace 3 from build `8d226bd` proved that the one-shot inquiry completed with
+  zero results before the controller became discoverable. Three existing vWii
+  registrations/link keys were present, but none identified the Switch Pro;
+  consequently no Switch target, HID, parser, publication or PPC events were
+  produced. The discovery path now retries inquiry at bounded intervals (at
+  most twelve attempts) until a Switch target is found, allowing the user to
+  enter controller SYNC mode after the game has loaded.
 
 The current implementation keeps the proven authentication/encryption gate and
 uses the full initialization sequence found in Bloopair and Linux

@@ -123,7 +123,14 @@ static const u8 LEDState[] = { 0x10, 0x20, 0x40, 0x80, 0xF0 };
 #define SWITCH_DIAG_ENCRYPTED       (1<<1)
 #define SWITCH_DIAG_PROTOCOL_STARTED (1<<2)
 #define SWITCH_PRO_TIMER_TICKS_PER_MS 1898
+#define SWITCH_INQUIRY_RETRY_SECONDS 2
+#define SWITCH_INQUIRY_MAX_ATTEMPTS 12
 static const s8 DEADZONE = 0x1A;
+
+static u32 SwitchInquiryRetryTimer;
+static u8 SwitchInquiryActive;
+static u8 SwitchInquiryAttempts;
+static u8 SwitchInquiryTargetFound;
 
 static void BTSwitchStartProtocol(struct BTPadStat *stat);
 
@@ -189,6 +196,7 @@ static void BTDiagnosticAdvanceSecurity(void)
 
 static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 {
+	SwitchInquiryTargetFound = 1;
 	BTDiagnosticTarget = *bdaddr;
 	BTDiagnosticTargetSet = 1;
 	BTDiagnosticStage = BT_DIAG_FOUND;
@@ -1211,6 +1219,9 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 	u32 i, count, cod;
 	u8 switch_found = 0;
 
+	SwitchInquiryActive = 0;
+	SwitchInquiryRetryTimer = read32(HW_TIMER);
+
 	if(result == ERR_OK)
 		found = BTE_GetInquiryResults(info, CONF_PAD_MAX_REGISTERED);
 	for(i = 0; i < (u32)found; i++)
@@ -1222,6 +1233,8 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 			break;
 		}
 	}
+	if(switch_found)
+		SwitchInquiryTargetFound = 1;
 	BTSwitchTraceArm(SWITCH_TRACE_ARM_INQUIRY, result, found, BTKeyCount,
 		BTDevices->num_registered, switch_found, 0, 0, 0, 0);
 	for(i = 0; i < (u32)found && i < 4; i++)
@@ -1311,7 +1324,11 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 static s32 BTCompleteCB(s32 result,void *usrdata)
 {
 	if(result == ERR_OK)
+	{
+		SwitchInquiryActive = 1;
+		SwitchInquiryAttempts = 1;
 		BTE_InquiryAsync(CONF_PAD_MAX_REGISTERED, BTPairInquiryCB);
+	}
 	return ERR_OK;
 }
 
@@ -1341,6 +1358,10 @@ u32 BTTimer = 0;
 u32 inited = 0;
 void BTInit(void)
 {
+	SwitchInquiryRetryTimer = 0;
+	SwitchInquiryActive = 0;
+	SwitchInquiryAttempts = 0;
+	SwitchInquiryTargetFound = 0;
 	BTDiagnosticStage = 0;
 	BTDiagnosticTargetSet = 0;
 	BTDiagnosticStorePending = 0;
@@ -1643,6 +1664,19 @@ void BTUpdateRegisters(void)
 		//dbgprintf("tick\n");
 		l2cap_tmr(); //every second
 		BTTimer = read32(HW_TIMER);
+	}
+	/* The initial inquiry normally finishes while the game is still loading.
+	 * Keep a bounded discovery window open so a user can put an unregistered
+	 * Switch Pro Controller in SYNC mode after gameplay becomes visible. */
+	if(!SwitchInquiryTargetFound && !SwitchInquiryActive &&
+		SwitchInquiryAttempts > 0 &&
+		SwitchInquiryAttempts < SWITCH_INQUIRY_MAX_ATTEMPTS &&
+		TimerDiffSeconds(SwitchInquiryRetryTimer) >=
+			SWITCH_INQUIRY_RETRY_SECONDS)
+	{
+		SwitchInquiryActive = 1;
+		SwitchInquiryAttempts++;
+		BTE_InquiryAsync(CONF_PAD_MAX_REGISTERED, BTPairInquiryCB);
 	}
 	BTSwitchTraceAutoDumpUpdate();
 }
