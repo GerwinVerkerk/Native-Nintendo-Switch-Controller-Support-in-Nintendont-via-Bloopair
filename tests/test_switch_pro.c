@@ -208,10 +208,10 @@ static void test_subcommand(void)
 	assert(len == 12);
 	assert(report[0] == 0x01);
 	assert(report[1] == 0x00);
-	assert(report[2] == 0x00 && report[3] == 0x01);
-	assert(report[4] == 0x40 && report[5] == 0x40);
-	assert(report[6] == 0x00 && report[7] == 0x01);
-	assert(report[8] == 0x40 && report[9] == 0x40);
+	assert(report[2] == 0x00 && report[3] == 0x00);
+	assert(report[4] == 0x00 && report[5] == 0x00);
+	assert(report[6] == 0x00 && report[7] == 0x00);
+	assert(report[8] == 0x00 && report[9] == 0x00);
 	assert(report[10] == SWITCH_PRO_SUBCMD_REPORT_MODE);
 	assert(report[11] == SWITCH_PRO_REPORT_FULL);
 
@@ -258,7 +258,7 @@ static void test_init_happy_path(void)
 	SwitchProReset(&state);
 	SwitchProInitStart(&state);
 	assert(state.init_state == SWITCH_PRO_INIT_INITIAL_DELAY);
-	assert(SwitchProInitDelayMs(&state) == 300);
+	assert(SwitchProInitDelayMs(&state) == 15);
 	action = SwitchProInitPoll(&state);
 	assert(action == SWITCH_PRO_INIT_ACTION_DEVICE_INFO);
 	assert(state.init_state == SWITCH_PRO_INIT_WAIT_DEVICE_INFO);
@@ -275,7 +275,7 @@ static void test_init_happy_path(void)
 		sizeof(device_info)) == SWITCH_PRO_ACK_ACCEPTED);
 	assert(state.device_type == 3);
 	assert(state.init_state == SWITCH_PRO_INIT_DEVICE_INFO_ACKED);
-	assert(SwitchProInitDelayMs(&state) == 60);
+	assert(SwitchProInitDelayMs(&state) == 10);
 	action = SwitchProInitPoll(&state);
 	assert(action == SWITCH_PRO_INIT_ACTION_PLAYER_LED);
 	assert(state.init_state == SWITCH_PRO_INIT_WAIT_PLAYER_LED);

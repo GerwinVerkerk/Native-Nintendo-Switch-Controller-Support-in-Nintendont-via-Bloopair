@@ -618,16 +618,12 @@ static s32 BTSwitchSendSubcommand(struct BTPadStat *stat, u8 command,
 	return ERR_VAL;
 }
 
-static s32 BTSwitchProtocolReady(void *arg,struct bte_pcb *pcb,u8 err)
+static void BTSwitchProtocolReady(struct BTPadStat *stat)
 {
-	struct BTPadStat *stat = (struct BTPadStat*)arg;
-	if(err != ERR_OK)
-		return ERR_OK;
 	BTDiagnosticPairingPhase(BT_DIAG_PROTOCOL_READY, &stat->bdaddr);
 	SwitchProInitStart(&stat->switch_state);
 	stat->switch_init_timer = read32(HW_TIMER);
 	sync_after_write(stat, sizeof(struct BTPadStat));
-	return ERR_OK;
 }
 
 static void BTSwitchStartProtocol(struct BTPadStat *stat)
@@ -637,8 +633,11 @@ static void BTSwitchStartProtocol(struct BTPadStat *stat)
 		(SWITCH_DIAG_HID_OPEN | SWITCH_DIAG_ENCRYPTED))
 		return;
 	stat->diagnostic_state |= SWITCH_DIAG_PROTOCOL_STARTED;
-	bte_setprotocolasync(stat->sock, HIDP_PROTO_REPORT,
-		BTSwitchProtocolReady);
+	/* A Switch Pro Controller already uses report protocol on its incoming
+	 * HID channels.  The working Linux A-wake trace sends no HID SET_PROTOCOL
+	 * transaction: it starts subcommand 0x02 directly on interrupt PSM 0x13.
+	 * Waiting for a SET_PROTOCOL handshake here can stall initialization. */
+	BTSwitchProtocolReady(stat);
 }
 
 static void BTSwitchUpdateProtocol(struct BTPadStat *stat)
