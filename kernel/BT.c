@@ -132,11 +132,11 @@ static void BTSwitchTraceArm(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e,
 {
 	u32 index = SwitchArmTrace->count;
 	struct SwitchProTraceEvent *event;
+	/* The Wii Remote path also produces authentication/encryption callbacks.
+	 * Ignore those until BTDiagnosticSetTarget identifies a Switch Pro; otherwise
+	 * they can start and finish the timed capture before the controller test. */
 	if(type != SWITCH_TRACE_ARM_INIT && !SwitchTraceCaptureStarted)
-	{
-		SwitchTraceCaptureStarted = 1;
-		SwitchTraceCaptureTimer = read32(HW_TIMER);
-	}
+		return;
 	if(index >= SWITCH_PRO_TRACE_EVENTS)
 	{
 		SwitchArmTrace->dropped++;
@@ -197,6 +197,13 @@ static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr)
 	BTDiagnosticTarget = *bdaddr;
 	BTDiagnosticTargetSet = 1;
 	BTDiagnosticStage = BT_DIAG_FOUND;
+	if(!SwitchTraceCaptureStarted)
+	{
+		SwitchTraceCaptureStarted = 1;
+		SwitchTraceCaptureTimer = read32(HW_TIMER);
+		BTSwitchTraceArm(SWITCH_TRACE_ARM_PHASE, BT_DIAG_FOUND,
+			0, 0, 0, 0, 0, 0, 0, 0);
+	}
 	BTDiagnosticAuthenticated = 0;
 	BTDiagnosticEncrypted = 0;
 	BTDiagnosticLinkKeyValid = 0;
