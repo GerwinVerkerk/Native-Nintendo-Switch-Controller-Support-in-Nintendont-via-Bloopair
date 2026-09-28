@@ -925,9 +925,11 @@ err_t hci_io_capability_request_reply(struct bd_addr *bdaddr)
 		return ERR_MEM;
 	p = hci_cmd_ass(p,HCI_IO_CAPABILITY_REQ_REP,HCI_LINK_CTRL_OGF,13);
 	memcpy(((u8_t*)p->payload)+4,bdaddr->addr,6);
-	((u8_t*)p->payload)[10] = 0x03; /* NoInputNoOutput. */
+	/* Match the working Linux/BlueZ pairing capture.  The controller itself
+	 * reports NoInputNoOutput, so auto-confirmation still yields Just Works. */
+	((u8_t*)p->payload)[10] = 0x01; /* DisplayYesNo. */
 	((u8_t*)p->payload)[11] = 0x00; /* No OOB authentication data. */
-	((u8_t*)p->payload)[12] = 0x04; /* General bonding, no MITM. */
+	((u8_t*)p->payload)[12] = 0x03; /* Dedicated bonding, MITM requested. */
 	physbusif_output(p,p->tot_len);
 	btpbuf_free(p);
 	return ERR_OK;
@@ -1738,6 +1740,8 @@ void hci_event_handler(struct pbuf *p)
 			ogf = (opc>>10);
 			if(ogf == HCI_LINK_CTRL_OGF && ocf == HCI_AUTHENTICATION_REQUESTED)
 				BTDiagnosticAuthenticationCommandResult(((u8_t*)p->payload)[0]);
+			if(ogf == HCI_LINK_CTRL_OGF && ocf == HCI_SET_CONN_ENCRYPT)
+				BTDiagnosticEncryptionCommandResult(((u8_t*)p->payload)[0]);
 			if(((u8_t*)p->payload)[0]!=HCI_SUCCESS) {
 				btpbuf_header(p,-2);
 				

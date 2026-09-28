@@ -54,6 +54,10 @@ static u8 BTDiagnosticLinkKeyValid = 0;
 static u8 BTDiagnosticAuthRequested = 0;
 static u8 BTDiagnosticAuthenticated = 0;
 static u8 BTDiagnosticEncrypted = 0;
+static struct bd_addr BTAuthenticationCommandTarget;
+static u8 BTAuthenticationCommandPending = 0;
+static struct bd_addr BTEncryptionCommandTarget;
+static u8 BTEncryptionCommandPending = 0;
 static u8 BTDiagnosticBlinkOn = 1;
 static u32 BTDiagnosticBlinkTimer = 0;
 static volatile u32 BTDiagnosticSwitchButtons = 0;
@@ -190,6 +194,73 @@ static struct BTPadStat *BTFindSwitchStat(const struct bd_addr *bdaddr)
 	return NULL;
 }
 
+static void BTFailSwitchSecurity(struct BTPadStat *stat)
+{
+	if(stat == NULL)
+		return;
+	SwitchProTransportFail(&stat->switch_transport);
+	if(stat->sock != NULL)
+		bte_security_complete(stat->sock, ERR_CONN);
+}
+
+static err_t BTRequestSwitchAuthentication(struct BTPadStat *stat)
+{
+	err_t result;
+	if(stat == NULL)
+		return ERR_VAL;
+	result = hci_authentication_requested(&stat->bdaddr);
+	if(result == ERR_OK)
+	{
+		BTAuthenticationCommandTarget = stat->bdaddr;
+		BTAuthenticationCommandPending = 1;
+	}
+	else
+	{
+		BTDiagnosticHIDHostEvent(&stat->bdaddr,
+			BT_HID_HOST_PAIRING_RETRY, result, 1);
+		BTFailSwitchSecurity(stat);
+	}
+	return result;
+}
+
+static err_t BTRequestSwitchEncryption(struct BTPadStat *stat)
+{
+	err_t result;
+	if(stat == NULL)
+		return ERR_VAL;
+	result = hci_set_connection_encrypt(&stat->bdaddr, 1);
+	if(result == ERR_OK)
+	{
+		BTEncryptionCommandTarget = stat->bdaddr;
+		BTEncryptionCommandPending = 1;
+	}
+	else
+	{
+		BTDiagnosticHIDHostEvent(&stat->bdaddr,
+			BT_HID_HOST_TRANSPORT_READY, result, 1);
+		BTFailSwitchSecurity(stat);
+	}
+	return result;
+}
+
+static void BTCompleteSwitchSecurity(struct BTPadStat *stat)
+{
+	u8 action;
+	if(stat == NULL)
+		return;
+	if(!stat->switch_remote_name_requested)
+	{
+		stat->switch_remote_name_requested = 1;
+		hci_read_remote_name(&stat->bdaddr);
+	}
+	action = SwitchProTransportSecurityReady(&stat->switch_transport);
+	stat->diagnostic_state |= SWITCH_DIAG_ENCRYPTED;
+	BTDiagnosticHIDHostEvent(&stat->bdaddr, BT_HID_HOST_TRANSPORT_READY,
+		action, stat->switch_transport.origin);
+	bte_security_complete(stat->sock, ERR_OK);
+	sync_after_write(stat, sizeof(struct BTPadStat));
+}
+
 static int RegisterBTPad(struct BTPadStat *stat, struct bd_addr *_bdaddr);
 
 static struct BTPadStat *BTFindRegisteredStat(const struct bd_addr *bdaddr)
@@ -224,6 +295,9 @@ static struct BTPadStat *BTPrepareSwitchSlot(const struct bd_addr *bdaddr,
 	stat->transfertype = TRANSFER_SWITCH_PRO;
 	stat->bdaddr = *bdaddr;
 	SwitchProTransportBegin(&stat->switch_transport, origin);
+	stat->switch_link_key_store_pending = 0;
+	stat->switch_remote_name_requested = 0;
+	stat->switch_remote_name_verified = 0;
 	if(origin == SWITCH_PRO_CONNECTION_OUTGOING)
 	{
 		/* SYNC/discovery denotes a fresh bond.  A cached vWii key for the
@@ -317,25 +391,22 @@ static void BTRegisterPersistentPads(void)
 	}
 }
 
-void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr)
+u8 BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr)
 {
 	struct BTPadStat *stat;
 	if(bdaddr == NULL)
-		return;
+		return 0;
 	stat = BTFindSwitchStat(bdaddr);
 	if(stat != NULL)
 	{
 		BTDiagnosticSetTarget(bdaddr);
 		SwitchProTransportACLReady(&stat->switch_transport);
-		if(!stat->switch_remote_name_requested)
-		{
-			stat->switch_remote_name_requested = 1;
-			hci_read_remote_name((struct bd_addr*)bdaddr);
-		}
 		/* A HID host initiates authentication on the newly established ACL.
 		 * A missing key will drive SSP; a stored key will be requested normally. */
-		hci_authentication_requested((struct bd_addr*)bdaddr);
+		BTRequestSwitchAuthentication(stat);
+		return 1;
 	}
+	return 0;
 }
 
 void BTDiagnosticIncomingConnectionRequest(const struct bd_addr *bdaddr,
@@ -415,17 +486,21 @@ void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr)
 	stat->switch_link_key_store_pending = 1;
 }
 
-void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
+u8 BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
 {
 	struct BTPadStat *stat;
 	if(bdaddr == NULL || key == NULL)
-		return;
+		return 0;
 	stat = BTFindSwitchStat(bdaddr);
 	if(stat != NULL)
 	{
 		memcpy(stat->switch_link_key, key, sizeof(stat->switch_link_key));
 		stat->switch_link_key_valid = 1;
 		stat->switch_force_new_pairing = 0;
+		/* Persist only after authentication and encryption complete.  Sending
+		 * Write Stored Link Key from Link Key Notification consumes the sole
+		 * HCI command credit while authentication is still in progress. */
+		stat->switch_link_key_store_pending = 1;
 	}
 	if(BTDiagnosticTargetSet &&
 		memcmp(BTDiagnosticTarget.addr, bdaddr->addr,
@@ -434,6 +509,7 @@ void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key)
 		memcpy(BTDiagnosticLinkKey, key, sizeof(BTDiagnosticLinkKey));
 		BTDiagnosticLinkKeyValid = 1;
 	}
+	return stat != NULL;
 }
 
 u8 BTDiagnosticGetLinkKey(const struct bd_addr *bdaddr, u8 *key)
@@ -477,27 +553,48 @@ void BTDiagnosticLinkKeyStoreResult(u8 result)
 	BTDiagnosticStorePending = 0;
 	for(i = 0; i < BTPadRegisteredCount; i++)
 	{
-		if(BTPadStatus[i].switch_link_key_store_pending)
+		if(BTPadStatus[i].switch_link_key_store_pending == 2)
 		{
 			BTPadStatus[i].switch_link_key_store_pending = 0;
 			if(result == HCI_SUCCESS)
-				hci_authentication_requested(&BTPadStatus[i].bdaddr);
+			{
+				if(BTDiagnosticStage == BT_DIAG_SSP_COMPLETE)
+					BTDiagnosticStage = BT_DIAG_LINK_KEY_STORED;
+				BTCompleteSwitchSecurity(&BTPadStatus[i]);
+			}
+			else
+				BTFailSwitchSecurity(&BTPadStatus[i]);
 		}
-	}
-	if(result == HCI_SUCCESS && BTDiagnosticStage == BT_DIAG_SSP_COMPLETE)
-	{
-		BTDiagnosticStage = BT_DIAG_LINK_KEY_STORED;
 	}
 }
 
 void BTDiagnosticAuthenticationCommandResult(u8 result)
 {
-	if(!BTDiagnosticTargetSet)
+	struct BTPadStat *stat;
+	if(!BTAuthenticationCommandPending)
 		return;
+	BTAuthenticationCommandPending = 0;
+	stat = BTFindSwitchStat(&BTAuthenticationCommandTarget);
 	if(result == HCI_SUCCESS)
 		BTDiagnosticAuthRequested = 1;
 	else
+	{
 		BTDiagnosticStage = BT_DIAG_AUTH_FAILED;
+		BTFailSwitchSecurity(stat);
+	}
+}
+
+void BTDiagnosticEncryptionCommandResult(u8 result)
+{
+	struct BTPadStat *stat;
+	if(!BTEncryptionCommandPending)
+		return;
+	BTEncryptionCommandPending = 0;
+	if(result == HCI_SUCCESS)
+		return;
+	stat = BTFindSwitchStat(&BTEncryptionCommandTarget);
+	BTDiagnosticStage = BT_DIAG_ENCRYPT_FAILED;
+	BTFailSwitchSecurity(stat);
 }
 
 void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
@@ -525,15 +622,14 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 			BTDiagnosticHIDHostEvent(bdaddr,
 				BT_HID_HOST_PAIRING_RETRY, result, 0);
 		}
-		hci_authentication_requested((struct bd_addr*)bdaddr);
+		BTRequestSwitchAuthentication(stat);
 		return;
 	}
 	if(result != HCI_SUCCESS)
 	{
 		if(target)
 			BTDiagnosticStage = BT_DIAG_AUTH_FAILED;
-		SwitchProTransportFail(&stat->switch_transport);
-		bte_security_complete(stat->sock, ERR_CONN);
+		BTFailSwitchSecurity(stat);
 		return;
 	}
 	stat->switch_transport.authenticated = 1;
@@ -542,7 +638,7 @@ void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr)
 		BTDiagnosticAuthenticated = 1;
 		BTDiagnosticAdvanceSecurity();
 	}
-	hci_set_connection_encrypt((struct bd_addr*)bdaddr, 1);
+	BTRequestSwitchEncryption(stat);
 }
 
 void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
@@ -560,8 +656,7 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	{
 		if(target)
 			BTDiagnosticStage = BT_DIAG_ENCRYPT_FAILED;
-		SwitchProTransportFail(&stat->switch_transport);
-		bte_security_complete(stat->sock, ERR_CONN);
+		BTFailSwitchSecurity(stat);
 		return;
 	}
 	if(target)
@@ -569,16 +664,22 @@ void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 		BTDiagnosticEncrypted = 1;
 		BTDiagnosticAdvanceSecurity();
 	}
+	stat->switch_transport.encrypted = 1;
+	if(stat->switch_link_key_store_pending == 1)
 	{
-		u8 action;
-		stat->switch_transport.encrypted = 1;
-		action = SwitchProTransportSecurityReady(&stat->switch_transport);
-		stat->diagnostic_state |= SWITCH_DIAG_ENCRYPTED;
-		BTDiagnosticHIDHostEvent(bdaddr, BT_HID_HOST_TRANSPORT_READY,
-			action, stat->switch_transport.origin);
-		bte_security_complete(stat->sock, ERR_OK);
-		sync_after_write(stat, sizeof(struct BTPadStat));
+		err_t store_result = hci_write_stored_link_key(&stat->bdaddr,
+			stat->switch_link_key);
+		if(store_result != ERR_OK)
+		{
+			stat->switch_link_key_store_pending = 0;
+			BTFailSwitchSecurity(stat);
+			return;
+		}
+		stat->switch_link_key_store_pending = 2;
+		BTDiagnosticStorePending = 1;
+		return;
 	}
+	BTCompleteSwitchSecurity(stat);
 }
 
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr)
@@ -1545,7 +1646,7 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 	count = BTPadRegisteredCount;
 
 	/* Nintendo Switch Pro Controller class of device: 0x002508. */
-	for(i = 0; i < (u32)found && count < CONF_PAD_MAX_REGISTERED; i++)
+	for(i = 0; i < (u32)found; i++)
 	{
 		struct BTPadStat *known;
 		u8 slot_action;
@@ -1575,6 +1676,15 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 					!known->sock->acl_connect_pending &&
 					!known->sock->acl_connected)
 				{
+					/* A controller in SYNC/discovery mode requests a fresh
+					 * bond.  Do not invalidate a live connection merely
+					 * because it also appeared in inquiry results. */
+					known->switch_force_new_pairing = 1;
+					known->switch_pairing_retry_done = 0;
+					known->switch_link_key_valid = 0;
+					known->switch_link_key_store_pending = 0;
+					known->switch_remote_name_requested = 0;
+					known->switch_remote_name_verified = 0;
 					SwitchProTransportBegin(&known->switch_transport,
 						SWITCH_PRO_CONNECTION_OUTGOING);
 					BTDiagnosticHIDHostEvent(&info[i].bdaddr,
@@ -1585,9 +1695,17 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 			}
 			break;
 		}
+		if(count >= CONF_PAD_MAX_REGISTERED)
+			continue;
 		BTDiagnosticSetTarget(&info[i].bdaddr);
 		BTPadStatus[count].transfertype = TRANSFER_SWITCH_PRO;
 		BTPadStatus[count].channel = CHAN_NOT_SET;
+		BTPadStatus[count].switch_force_new_pairing = 1;
+		BTPadStatus[count].switch_pairing_retry_done = 0;
+		BTPadStatus[count].switch_link_key_valid = 0;
+		BTPadStatus[count].switch_link_key_store_pending = 0;
+		BTPadStatus[count].switch_remote_name_requested = 0;
+		BTPadStatus[count].switch_remote_name_verified = 0;
 		SwitchProTransportBegin(&BTPadStatus[count].switch_transport,
 			SWITCH_PRO_CONNECTION_OUTGOING);
 		RegisterBTPad(&BTPadStatus[count], &info[i].bdaddr);
@@ -1656,6 +1774,8 @@ void BTInit(void)
 	BTDiagnosticAuthRequested = 0;
 	BTDiagnosticAuthenticated = 0;
 	BTDiagnosticEncrypted = 0;
+	BTAuthenticationCommandPending = 0;
+	BTEncryptionCommandPending = 0;
 	BTDiagnosticBlinkOn = 1;
 	BTDiagnosticBlinkTimer = read32(HW_TIMER);
 	BTDiagnosticSwitchButtons = 0;

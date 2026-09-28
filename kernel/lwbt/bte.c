@@ -846,8 +846,12 @@ err_t acl_conn_complete(void *arg,struct bd_addr *bdaddr)
 	//printf("acl_conn_complete\n");
 	//memcpy(&(btstate.acl_bdaddr),bdaddr,6);
 
-	BTDiagnosticConnectionTarget(bdaddr);
-	hci_write_link_policy_settings(bdaddr,0x0005);
+	/* Do not issue Link Policy immediately after Switch authentication: the
+	 * Wii Bluetooth host controller exposes one HCI command credit, so the
+	 * second command can race Authentication Requested.  The legacy policy
+	 * remains for Wii pads. */
+	if(!BTDiagnosticConnectionTarget(bdaddr))
+		hci_write_link_policy_settings(bdaddr,0x0005);
 	return ERR_OK;
 }
 
@@ -920,7 +924,11 @@ err_t link_key_not(void *arg,struct bd_addr *bdaddr,u8_t *key)
 {
 	err_t result;
 	//printf("link_key_not\n");
-	BTDiagnosticCacheLinkKey(bdaddr,key);
+	/* Switch pairing defers controller-side persistence until encryption is
+	 * active, so Authentication Complete can finish without a competing HCI
+	 * command.  Preserve the legacy immediate store for Wii-family devices. */
+	if(BTDiagnosticCacheLinkKey(bdaddr,key))
+		return ERR_OK;
 	result = hci_write_stored_link_key(bdaddr,key);
 	if(result == ERR_OK)
 		BTDiagnosticLinkKeyQueued(bdaddr);

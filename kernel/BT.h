@@ -56,15 +56,16 @@ void BTTraceDumpToFile(void);
 
 void BTDiagnosticPairingPhase(u32 phase, const struct bd_addr *bdaddr);
 void BTDiagnosticLinkKeyQueued(const struct bd_addr *bdaddr);
-void BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key);
+u8 BTDiagnosticCacheLinkKey(const struct bd_addr *bdaddr, const u8 *key);
 u8 BTDiagnosticGetLinkKey(const struct bd_addr *bdaddr, u8 *key);
 void BTDiagnosticLinkKeyStoreResult(u8 result);
 void BTDiagnosticAuthenticationCommandResult(u8 result);
+void BTDiagnosticEncryptionCommandResult(u8 result);
 void BTDiagnosticAuthenticationResult(u8 result, const struct bd_addr *bdaddr);
 void BTDiagnosticEncryptionResult(u8 result, u8 enabled,
 	const struct bd_addr *bdaddr);
 void BTDiagnosticHIDChannelsOpen(const struct bd_addr *bdaddr);
-void BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr);
+u8 BTDiagnosticConnectionTarget(const struct bd_addr *bdaddr);
 void BTDiagnosticIncomingConnectionRequest(const struct bd_addr *bdaddr,
 	const u8 *cod);
 void BTDiagnosticACLResult(const struct bd_addr *bdaddr, u32 result);
