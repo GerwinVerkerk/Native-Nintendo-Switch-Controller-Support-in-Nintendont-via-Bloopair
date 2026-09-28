@@ -33,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "ff_utf8.h"
 #include "../common/include/SwitchProDiag.h"
 #include "../common/include/SwitchProTrace.h"
+#include "../common/include/SwitchProPairing.h"
 
 extern int dbgprintf( const char *fmt, ...);
 
@@ -45,6 +46,7 @@ static struct BTPadStat *BTPadConnected[4];
 static struct BTPadStat BTPadStatus[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static struct linkkey_info BTKeys[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static u32 BTKeyCount = 0;
+static SwitchProPairing *SwitchPairing = (SwitchProPairing*)SWITCH_PRO_PAIRING_ADDR;
 static volatile u32 BTDiagnosticStage = 0;
 static struct bd_addr BTDiagnosticTarget;
 static u8 BTDiagnosticTargetSet = 0;
@@ -1743,9 +1745,29 @@ static s32 BTPatchCB(s32 result,void *usrdata)
 
 static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
 {
+	u32 i;
 	BTKeyCount = result > 0 ? (u32)result : 0;
 	if(BTKeyCount > CONF_PAD_MAX_REGISTERED)
 		BTKeyCount = CONF_PAD_MAX_REGISTERED;
+	sync_before_read(SwitchPairing, sizeof(*SwitchPairing));
+	if(SwitchProPairingIsValid(SwitchPairing))
+	{
+		for(i = 0; i < BTKeyCount; i++)
+		{
+			if(memcmp(BTKeys[i].bdaddr.addr, SwitchPairing->controller_bda,
+				sizeof(BTKeys[i].bdaddr.addr)) == 0)
+				break;
+		}
+		if(i < CONF_PAD_MAX_REGISTERED)
+		{
+			memcpy(BTKeys[i].bdaddr.addr, SwitchPairing->controller_bda,
+				sizeof(BTKeys[i].bdaddr.addr));
+			memcpy(BTKeys[i].key, SwitchPairing->link_key,
+				sizeof(BTKeys[i].key));
+			if(i == BTKeyCount)
+				BTKeyCount++;
+		}
+	}
 	BTE_ApplyPatch(BTPatchCB);
 	return ERR_OK;
 }

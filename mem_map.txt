@@ -75,6 +75,7 @@ MEM2
 0x932F0000-0x932F008F=BTPad
 0x932F0100-0x932F01BF=Switch Pro ARM trace buffer
 0x932F0200-0x932F023F=Switch Pro PPC trace/ack buffer
+0x932F3000-0x932F302F=Validated Bloopair pairing bridge record
 
 Hardware Registers
 0x0D80600C=EXI Command/Loop

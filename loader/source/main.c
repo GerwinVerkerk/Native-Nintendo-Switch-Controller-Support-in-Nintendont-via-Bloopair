@@ -51,6 +51,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 #include "ff_utf8.h"
 #include "diskio.h"
+#include "../../common/include/SwitchProPairing.h"
 // from diskio.c
 extern DISC_INTERFACE *driver[_VOLUMES];
 
@@ -254,6 +255,30 @@ static void CopySwitchProTraceToSd(void)
 	}
 	f_close(&source);
 	free(buffer);
+}
+
+static void LoadSwitchProPairingFromSd(void)
+{
+	FIL file;
+	SwitchProPairing pairing;
+	SwitchProPairing *shared = (SwitchProPairing*)SWITCH_PRO_PAIRING_ADDR;
+	UINT read = 0;
+
+	memset(shared, 0, sizeof(*shared));
+	DCFlushRange(shared, sizeof(*shared));
+	if(!devices[DEV_SD])
+		return;
+	if(f_open_char(&file, "sd:/" SWITCH_PRO_PAIRING_PATH,
+		FA_READ | FA_OPEN_EXISTING) != FR_OK)
+		return;
+	if(f_size(&file) == sizeof(pairing) &&
+		f_read(&file, &pairing, sizeof(pairing), &read) == FR_OK &&
+		read == sizeof(pairing) && SwitchProPairingIsValid(&pairing))
+	{
+		memcpy(shared, &pairing, sizeof(pairing));
+		DCFlushRange(shared, sizeof(*shared));
+	}
+	f_close(&file);
 }
 
 /**
@@ -808,6 +833,7 @@ int main(int argc, char **argv)
 		ExitToLoader(1);
 	}
 	CopySwitchProTraceToSd();
+	LoadSwitchProPairingFromSd();
 	// Seems like some programs start without any args
 	if(argc > 0 && argv != NULL && argv[0] != NULL)
 	{

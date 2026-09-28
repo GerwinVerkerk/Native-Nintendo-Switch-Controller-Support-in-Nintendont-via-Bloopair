@@ -3,6 +3,32 @@
 #include <string.h>
 
 #include "SwitchPro.h"
+#include "SwitchProPairing.h"
+
+static void test_pairing_record(void)
+{
+	SwitchProPairing pairing;
+	u32 i;
+	memset(&pairing, 0, sizeof(pairing));
+	pairing.magic = SWITCH_PRO_PAIRING_MAGIC;
+	pairing.version = SWITCH_PRO_PAIRING_VERSION;
+	pairing.size = sizeof(pairing);
+	pairing.controller_type = SWITCH_PRO_PAIRING_TYPE;
+	pairing.vendor_id = 0x057e;
+	pairing.product_id = 0x2009;
+	pairing.controller_bda[0] = 1;
+	pairing.console_bda[0] = 1;
+	for(i = 0; i < sizeof(pairing.link_key); i++)
+		pairing.link_key[i] = (u8)(i + 1);
+	pairing.checksum = SwitchProPairingChecksum(&pairing);
+	assert(SwitchProPairingIsValid(&pairing));
+	pairing.link_key[7] ^= 0x80;
+	assert(!SwitchProPairingIsValid(&pairing));
+	pairing.link_key[7] ^= 0x80;
+	pairing.checksum = SwitchProPairingChecksum(&pairing);
+	pairing.product_id = 0x2008;
+	assert(!SwitchProPairingIsValid(&pairing));
+}
 
 static void pack_axis(u8 *data, u16 x, u16 y)
 {
@@ -445,6 +471,7 @@ static void test_stale_link_key_retries_pairing_once(void)
 
 int main(void)
 {
+	test_pairing_record();
 	test_full_report();
 	test_basic_report_and_first_packet_drop();
 	test_full_button_bits_individually();
