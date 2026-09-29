@@ -970,6 +970,12 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 		{
 			BD_ADDR(&(bdaddr),BTDevices->registered[i].bdaddr[5],BTDevices->registered[i].bdaddr[4],BTDevices->registered[i].bdaddr[3],
 							BTDevices->registered[i].bdaddr[2],BTDevices->registered[i].bdaddr[1],BTDevices->registered[i].bdaddr[0]);
+			if(IsSwitchAddress(&bdaddr))
+			{
+				SwitchStatus->stored_address_matches++;
+				SwitchStatus->flags |=
+					SWITCH_PRO_STATUS_DUPLICATE_LISTENER;
+			}
 
 			if(strstr(BTDevices->registered[i].name, "-UC") != NULL)	//if wiiu pro controller
 				BTPadStatus[i].transfertype = 0x3D;
@@ -1070,19 +1076,43 @@ void BTSwitchIncomingEncryption(struct bd_addr *bdaddr,u8 result,u8 enabled)
 		SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_PENDING;
 }
 
-void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel)
+static u32 BTSwitchChannelOwner(struct bte_pcb *owner)
 {
+	u32 i;
+	if(owner == NULL)
+		return SWITCH_PRO_STATUS_OWNER_UNKNOWN;
+	if(owner == SwitchPadStatus.sock)
+		return SWITCH_PRO_STATUS_OWNER_DEDICATED;
+	for(i = 0; i < CONF_PAD_MAX_REGISTERED; i++)
+	{
+		if(owner == BTPadStatus[i].sock)
+			return SWITCH_PRO_STATUS_OWNER_REGULAR_BASE + i;
+	}
+	return SWITCH_PRO_STATUS_OWNER_UNKNOWN;
+}
+
+void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel,
+	struct bte_pcb *owner)
+{
+	u32 owner_code;
 	if(!IsSwitchAddress(bdaddr))
 		return;
+	owner_code = BTSwitchChannelOwner(owner);
 	if(control_channel)
 	{
 		SwitchStatus->control_count++;
 		SwitchStatus->flags |= SWITCH_PRO_STATUS_CONTROL_OPEN;
+		SwitchStatus->control_channel_owner = owner_code;
+		if(owner_code == SWITCH_PRO_STATUS_OWNER_DEDICATED)
+			SwitchStatus->flags |= SWITCH_PRO_STATUS_CONTROL_DEDICATED;
 	}
 	else
 	{
 		SwitchStatus->interrupt_count++;
 		SwitchStatus->flags |= SWITCH_PRO_STATUS_INTERRUPT_OPEN;
+		SwitchStatus->interrupt_channel_owner = owner_code;
+		if(owner_code == SWITCH_PRO_STATUS_OWNER_DEDICATED)
+			SwitchStatus->flags |= SWITCH_PRO_STATUS_INTERRUPT_DEDICATED;
 	}
 	SwitchProIncomingChannels(&SwitchIncoming,
 		SwitchIncoming.control_open || control_channel,

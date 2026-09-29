@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define SWITCH_PRO_STATUS_MAGIC    0x53504d53u
-#define SWITCH_PRO_STATUS_VERSION  3u
+#define SWITCH_PRO_STATUS_VERSION  4u
 #define SWITCH_PRO_STATUS_ARM_ADDR 0x132f3040u
 #define SWITCH_PRO_STATUS_PPC_ADDR 0x932f3040u
 #define SWITCH_PRO_STATUS_PATH     "switch-pro-minimal.bin"
@@ -34,6 +34,14 @@
 #define SWITCH_PRO_STATUS_TRANSPORT_PENDING (1u << 22)
 #define SWITCH_PRO_STATUS_TRANSPORT_READY   (1u << 23)
 #define SWITCH_PRO_STATUS_TRANSPORT_TIMEOUT (1u << 24)
+#define SWITCH_PRO_STATUS_CONTROL_DEDICATED  (1u << 25)
+#define SWITCH_PRO_STATUS_INTERRUPT_DEDICATED (1u << 26)
+#define SWITCH_PRO_STATUS_DUPLICATE_LISTENER (1u << 27)
+
+#define SWITCH_PRO_STATUS_OWNER_NONE       0u
+#define SWITCH_PRO_STATUS_OWNER_DEDICATED  1u
+#define SWITCH_PRO_STATUS_OWNER_REGULAR_BASE 0x100u
+#define SWITCH_PRO_STATUS_OWNER_UNKNOWN    0xffffffffu
 
 typedef struct __attribute__((packed)) {
 	uint32_t magic;
@@ -66,7 +74,9 @@ typedef struct __attribute__((packed)) {
 	uint32_t init_send_attempts;
 	int32_t init_last_send_result;
 	uint32_t transport_timeouts;
-	uint32_t reserved[3];
+	uint32_t stored_address_matches;
+	uint32_t control_channel_owner;
+	uint32_t interrupt_channel_owner;
 } SwitchProMinimalStatus;
 
 typedef char SwitchProMinimalStatusSizeCheck[

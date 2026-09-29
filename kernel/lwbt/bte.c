@@ -821,11 +821,11 @@ err_t l2cap_accepted(void *arg,struct l2cap_pcb *l2cappcb,err_t err)
 		switch(l2cap_psm(l2cappcb)) {
 			case HIDP_CONTROL_CHANNEL:
 				btepcb->ctl_pcb = l2cappcb;
-				BTSwitchIncomingChannel(&btepcb->bdaddr,1);
+				BTSwitchIncomingChannel(&btepcb->bdaddr,1,btepcb);
 				break;
 			case HIDP_DATA_CHANNEL:
 				btepcb->data_pcb = l2cappcb;
-				BTSwitchIncomingChannel(&btepcb->bdaddr,0);
+				BTSwitchIncomingChannel(&btepcb->bdaddr,0,btepcb);
 				break;
 		}
 		if(btepcb->data_pcb && btepcb->ctl_pcb)

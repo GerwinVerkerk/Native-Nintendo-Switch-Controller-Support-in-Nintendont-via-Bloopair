@@ -36,7 +36,10 @@ static void test_pairing_record(void)
 	assert(sizeof(pairing) == 48);
 	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
 	assert(sizeof(SwitchProMinimalStatus) == 128);
-	assert(SWITCH_PRO_STATUS_VERSION == 3);
+	assert(SWITCH_PRO_STATUS_VERSION == 4);
+	assert(SWITCH_PRO_STATUS_OWNER_NONE == 0);
+	assert(SWITCH_PRO_STATUS_OWNER_DEDICATED == 1);
+	assert(SWITCH_PRO_STATUS_OWNER_REGULAR_BASE == 0x100);
 	assert((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
 		SWITCH_PRO_STATUS_ARM_ADDR);
 	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
