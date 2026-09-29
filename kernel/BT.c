@@ -1766,6 +1766,9 @@ static s32 BTPairInquiryCB(s32 result,void *usrdata)
 
 static s32 BTCompleteCB(s32 result,void *usrdata)
 {
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 0x23,
+		result == ERR_OK, SwitchPairingImported, BTPadRegistrationInitialized,
+		BTPadRegisteredCount, 0, 0, 0, 0);
 	if(result == ERR_OK)
 	{
 		/* The vendor patch resets and re-reads the local controller address.
@@ -1788,7 +1791,10 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 
 static s32 BTPatchCB(s32 result,void *usrdata)
 {
-	BTE_InitSub(BTCompleteCB);
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 0x22,
+		result == ERR_OK, SwitchPairingImported, 0, 0, 0, 0, 0, 0);
+	if(result == ERR_OK)
+		BTE_InitSub(BTCompleteCB);
 	return ERR_OK;
 }
 
@@ -1807,7 +1813,15 @@ static u8 BTImportSwitchPairingKey(u32 trace_stage)
 		console_matches = SwitchProPairingConsoleMatchesLwbt(
 			SwitchPairing, local_bdaddr.addr);
 	}
-	if(SwitchPairingSnapshotValid && local_available && console_matches)
+	/* The record is exported by Koopair on this console and has already been
+	 * authenticated structurally by the loader and again by the ARM snapshot.
+	 * Do not make bridge activation depend on the asynchronous HCI local-address
+	 * query: on real hardware the stored-key callback can remain pending, which
+	 * previously meant this function was never reached at all.  Keep the live
+	 * console comparison as diagnostics; an incorrect/copy-from-another-console
+	 * record will fail normal Bluetooth authentication without affecting Wii
+	 * controller keys. */
+	if(SwitchPairingSnapshotValid)
 	{
 		for(i = 0; i < BTKeyCount; i++)
 		{
@@ -1838,7 +1852,11 @@ static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
 	BTKeyCount = result > 0 ? (u32)result : 0;
 	if(BTKeyCount > CONF_PAD_MAX_REGISTERED)
 		BTKeyCount = CONF_PAD_MAX_REGISTERED;
-	SwitchPairingImported = 0;
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 0x21,
+		result >= 0, BTKeyCount, SwitchPairingImported, 0, 0, 0, 0, 0);
+	/* Re-apply the private snapshot after the controller's stored keys arrive;
+	 * never turn off an already active bridge merely because this asynchronous
+	 * command completed late. */
 	BTImportSwitchPairingKey(0x11);
 	BTE_ApplyPatch(BTPatchCB);
 	return ERR_OK;
@@ -1846,6 +1864,9 @@ static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
 
 static s32 BTInitCoreCB(s32 result, void *usrdata)
 {
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 0x20,
+		result == ERR_OK, SwitchPairingSnapshotValid,
+		SwitchPairingImported, 0, 0, 0, 0, 0);
 	if(result == ERR_OK)
 		BTE_ReadStoredLinkKey(BTKeys, CONF_PAD_MAX_REGISTERED, BTReadLinkKeyCB);
 	return ERR_OK;
@@ -1947,6 +1968,12 @@ void BTInit(void)
 		BTUpdateRegisters();
 		udelay(200);
 	}
+	/* Bridge activation must not depend on Read Stored Link Keys completing.
+	 * The Switch key is also copied into its per-controller slot, so a later
+	 * stored-key callback cannot invalidate the incoming A-wake route. */
+	if(!SwitchPairingImported)
+		BTImportSwitchPairingKey(0x13);
+	BTRegisterPersistentPads();
 }
 
 static u8 BTSwitchTraceWriteFile(void)
