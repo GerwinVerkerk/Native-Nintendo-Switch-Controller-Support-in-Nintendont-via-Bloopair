@@ -20,12 +20,13 @@ def main() -> int:
         print(f"usage: {sys.argv[0]} switch-pro-minimal.bin", file=sys.stderr)
         return 2
     data = pathlib.Path(sys.argv[1]).read_bytes()
-    if len(data) not in (128, 144):
+    if len(data) not in (128, 144, 192):
         raise SystemExit(f"unexpected size: {len(data)}")
     values = struct.unpack(">IHHIi" + "I" * ((len(data) - 16) // 4), data)
     magic, version, size, flags, last_error = values[:5]
-    if (magic != 0x53504D53 or version not in (3, 4, 5) or
-            size != len(data) or (version == 5) != (size == 144)):
+    expected_sizes = {3: 128, 4: 128, 5: 144, 6: 192}
+    if (magic != 0x53504D53 or version not in expected_sizes or
+            size != len(data) or expected_sizes[version] != size):
         raise SystemExit("invalid status header")
     names = (
         "listener_result", "acl_count", "key_requests", "auth_result",
@@ -41,6 +42,11 @@ def main() -> int:
           ('reserved_0', 'reserved_1', 'reserved_2')),
         *(("led_desired_mask", "led_sent_mask", "led_acks",
            "led_send_attempts") if version >= 5 else ()),
+        *(("slot_count", "slot_channel_0", "slot_channel_1",
+           "slot_channel_2", "slot_channel_3", "slot_init_acks_0",
+           "slot_init_acks_1", "slot_init_acks_2", "slot_init_acks_3",
+           "slot_published_mask", "slot_connected_mask", "reserved")
+          if version >= 6 else ()),
     )
     print(f"flags=0x{flags:08x} last_error={last_error}")
     for bit, name in enumerate(FLAGS):

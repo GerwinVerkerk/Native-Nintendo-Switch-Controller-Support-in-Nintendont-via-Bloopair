@@ -7,36 +7,43 @@
 
 static void make_pairing(SwitchProPairing *pairing)
 {
-	u32 i;
+	u32 i, j;
 	memset(pairing, 0, sizeof(*pairing));
 	pairing->magic = SWITCH_PRO_PAIRING_MAGIC;
 	pairing->version = SWITCH_PRO_PAIRING_VERSION;
 	pairing->size = sizeof(*pairing);
-	pairing->controller_type = SWITCH_PRO_PAIRING_TYPE;
-	pairing->vendor_id = 0x057e;
-	pairing->product_id = 0x2009;
+	pairing->count = 2;
 	for(i = 0; i < 6; i++)
 	{
-		pairing->controller_bda[i] = i + 1;
 		pairing->console_bda[i] = i + 11;
+		pairing->controllers[0].controller_bda[i] = i + 1;
+		pairing->controllers[1].controller_bda[i] = i + 21;
 	}
-	pairing->key_type = SWITCH_PRO_PAIRING_KEY_TYPE_UNKNOWN;
-	for(i = 0; i < 16; i++)
-		pairing->hci_link_key[i] = i + 21;
+	for(i = 0; i < pairing->count; i++)
+	{
+		pairing->controllers[i].controller_type = SWITCH_PRO_PAIRING_TYPE;
+		pairing->controllers[i].vendor_id = 0x057e;
+		pairing->controllers[i].product_id = 0x2009;
+		pairing->controllers[i].key_type = SWITCH_PRO_PAIRING_KEY_TYPE_UNKNOWN;
+		for(j = 0; j < 16; j++)
+			pairing->controllers[i].hci_link_key[j] = i + j + 31;
+	}
 	pairing->checksum = SwitchProPairingChecksum(pairing);
 }
 
 static void test_pairing_record(void)
 {
 	SwitchProPairing pairing;
+	SwitchProPairing upgraded;
+	SwitchProPairingLegacyV2 legacy;
 	u8 lwbt[6];
 	u8 hci_key[16];
 	const u8 expected[6] = {6, 5, 4, 3, 2, 1};
 	make_pairing(&pairing);
-	assert(sizeof(pairing) == 48);
+	assert(sizeof(pairing) == 140);
 	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
-	assert(sizeof(SwitchProMinimalStatus) == 144);
-	assert(SWITCH_PRO_STATUS_VERSION == 5);
+	assert(sizeof(SwitchProMinimalStatus) == 192);
+	assert(SWITCH_PRO_STATUS_VERSION == 6);
 	assert(SWITCH_PRO_STATUS_OWNER_NONE == 0);
 	assert(SWITCH_PRO_STATUS_OWNER_DEDICATED == 1);
 	assert(SWITCH_PRO_STATUS_OWNER_REGULAR_BASE == 0x100);
@@ -45,20 +52,40 @@ static void test_pairing_record(void)
 	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
 		SWITCH_PRO_PAIRING_ARM_ADDR);
 	assert(SwitchProPairingIsValid(&pairing));
-	SwitchProPairingAddressToLwbt(pairing.controller_bda, lwbt);
+	SwitchProPairingAddressToLwbt(pairing.controllers[0].controller_bda, lwbt);
 	assert(memcmp(lwbt, expected, sizeof(lwbt)) == 0);
-	SwitchProPairingCopyHciLinkKey(&pairing, hci_key);
-	assert(memcmp(hci_key, pairing.hci_link_key, sizeof(hci_key)) == 0);
-	pairing.hci_link_key[3] ^= 0x80;
+	SwitchProPairingCopyHciLinkKey(&pairing.controllers[0], hci_key);
+	assert(memcmp(hci_key, pairing.controllers[0].hci_link_key, sizeof(hci_key)) == 0);
+	pairing.controllers[0].hci_link_key[3] ^= 0x80;
 	assert(!SwitchProPairingIsValid(&pairing));
-	pairing.hci_link_key[3] ^= 0x80;
+	pairing.controllers[0].hci_link_key[3] ^= 0x80;
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
 	pairing.version = 1;
 	assert(!SwitchProPairingIsValid(&pairing));
 	pairing.version = SWITCH_PRO_PAIRING_VERSION;
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
-	pairing.product_id = 0x2008;
+	pairing.controllers[0].product_id = 0x2008;
 	assert(!SwitchProPairingIsValid(&pairing));
+
+	memset(&legacy, 0, sizeof(legacy));
+	legacy.magic = SWITCH_PRO_PAIRING_MAGIC;
+	legacy.version = 2;
+	legacy.size = sizeof(legacy);
+	legacy.controller_bda[0] = 1;
+	legacy.console_bda[0] = 2;
+	legacy.controller_type = SWITCH_PRO_PAIRING_TYPE;
+	legacy.vendor_id = 0x057e;
+	legacy.product_id = 0x2009;
+	legacy.key_type = SWITCH_PRO_PAIRING_KEY_TYPE_UNKNOWN;
+	memset(legacy.hci_link_key, 0x5a, sizeof(legacy.hci_link_key));
+	legacy.checksum = SwitchProPairingLegacyV2Checksum(&legacy);
+	assert(SwitchProPairingUpgradeLegacyV2(&legacy, &upgraded));
+	assert(upgraded.count == 1);
+	assert(SwitchProPairingIsValid(&upgraded));
+	assert(memcmp(upgraded.controllers[0].controller_bda,
+		legacy.controller_bda, 6) == 0);
+	legacy.checksum ^= 1;
+	assert(!SwitchProPairingUpgradeLegacyV2(&legacy, &upgraded));
 }
 
 static void test_registration_is_independent_and_idempotent(void)

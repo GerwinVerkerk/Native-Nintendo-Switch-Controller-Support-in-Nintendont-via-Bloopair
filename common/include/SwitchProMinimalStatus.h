@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define SWITCH_PRO_STATUS_MAGIC    0x53504d53u
-#define SWITCH_PRO_STATUS_VERSION  5u
+#define SWITCH_PRO_STATUS_VERSION  6u
 #define SWITCH_PRO_STATUS_ARM_ADDR 0x132f3040u
 #define SWITCH_PRO_STATUS_PPC_ADDR 0x932f3040u
 #define SWITCH_PRO_STATUS_PATH     "switch-pro-minimal.bin"
@@ -81,10 +81,16 @@ typedef struct __attribute__((packed)) {
 	uint32_t led_sent_mask;
 	uint32_t led_acks;
 	uint32_t led_send_attempts;
+	uint32_t slot_count;
+	uint32_t slot_channel[4];
+	uint32_t slot_init_acks[4];
+	uint32_t slot_published_mask;
+	uint32_t slot_connected_mask;
+	uint32_t reserved;
 } SwitchProMinimalStatus;
 
 typedef char SwitchProMinimalStatusSizeCheck[
-	(sizeof(SwitchProMinimalStatus) == 144) ? 1 : -1];
+	(sizeof(SwitchProMinimalStatus) == 192) ? 1 : -1];
 typedef char SwitchProMinimalStatusAddressAliasCheck[
 	((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
 	SWITCH_PRO_STATUS_ARM_ADDR) ? 1 : -1];

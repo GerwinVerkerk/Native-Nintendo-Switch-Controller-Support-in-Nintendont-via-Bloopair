@@ -221,6 +221,7 @@ static void LoadSwitchProPairingFromSd(void)
 {
 	FIL file;
 	SwitchProPairing pairing;
+	SwitchProPairingLegacyV2 legacy;
 	SwitchProPairing *shared =
 		(SwitchProPairing*)SWITCH_PRO_PAIRING_PPC_ADDR;
 	UINT read = 0;
@@ -238,6 +239,18 @@ static void LoadSwitchProPairingFromSd(void)
 	{
 		memcpy(shared, &pairing, sizeof(pairing));
 		DCFlushRange(shared, sizeof(*shared));
+	}
+	else if(f_size(&file) == sizeof(legacy))
+	{
+		f_lseek(&file, 0);
+		read = 0;
+		if(f_read(&file, &legacy, sizeof(legacy), &read) == FR_OK &&
+			read == sizeof(legacy) &&
+			SwitchProPairingUpgradeLegacyV2(&legacy, &pairing))
+		{
+			memcpy(shared, &pairing, sizeof(pairing));
+			DCFlushRange(shared, sizeof(*shared));
+		}
 	}
 	f_close(&file);
 }
