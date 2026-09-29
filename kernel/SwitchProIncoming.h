@@ -84,6 +84,7 @@ struct SwitchProIncomingState {
 	u16 init_acks;
 	u16 led_sent;
 	u16 led_acks;
+	u16 raw_left_y;
 	struct SwitchProIncomingInput input;
 };
 
