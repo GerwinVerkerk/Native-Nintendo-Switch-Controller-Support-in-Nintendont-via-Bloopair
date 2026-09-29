@@ -46,9 +46,15 @@ static struct BTPadStat *BTPadConnected[4];
 static struct BTPadStat BTPadStatus[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static struct linkkey_info BTKeys[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static u32 BTKeyCount = 0;
-static SwitchProPairing *SwitchPairing = (SwitchProPairing*)SWITCH_PRO_PAIRING_ARM_ADDR;
+static SwitchProPairing *SwitchPairingShared =
+	(SwitchProPairing*)SWITCH_PRO_PAIRING_ARM_ADDR;
+static SwitchProPairingStatus *SwitchPairingStatusShared =
+	(SwitchProPairingStatus*)SWITCH_PRO_PAIRING_STATUS_ARM_ADDR;
+static SwitchProPairing SwitchPairingCache ALIGNED(32);
+static SwitchProPairing *SwitchPairing = &SwitchPairingCache;
 static struct bd_addr SwitchPairingBdaddr;
 static u8 SwitchPairingImported = 0;
+static u8 SwitchPairingSnapshotValid = 0;
 static volatile u32 BTDiagnosticStage = 0;
 static struct bd_addr BTDiagnosticTarget;
 static u8 BTDiagnosticTargetSet = 0;
@@ -147,6 +153,7 @@ static void BTSwitchStartProtocol(struct BTPadStat *stat);
 static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err);
 static void BTDiagnosticSetTarget(const struct bd_addr *bdaddr);
 static void BTRegisterPersistentPads(void);
+static u8 BTImportSwitchPairingKey(u32 trace_stage);
 
 static void BTSwitchTraceArm(u32 type, u32 a, u32 b, u32 c, u32 d, u32 e,
 	u32 f, u32 g, u32 h, u32 i)
@@ -1761,6 +1768,11 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 {
 	if(result == ERR_OK)
 	{
+		/* The vendor patch resets and re-reads the local controller address.
+		 * Retry the bridge import here if it was not yet available while the
+		 * stored-key command completed. */
+		if(!SwitchPairingImported)
+			BTImportSwitchPairingKey(0x12);
 		BTRegisterPersistentPads();
 		/* Inquiry and page scan share the same Classic Bluetooth radio.  A
 		 * continuous series of inquiries starves the incoming A-wake route:
@@ -1780,33 +1792,22 @@ static s32 BTPatchCB(s32 result,void *usrdata)
 	return ERR_OK;
 }
 
-static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
+static u8 BTImportSwitchPairingKey(u32 trace_stage)
 {
 	u32 i;
 	struct bd_addr local_bdaddr;
-	u8 record_valid;
 	u8 local_available = 0;
 	u8 console_matches = 0;
-	BTKeyCount = result > 0 ? (u32)result : 0;
-	if(BTKeyCount > CONF_PAD_MAX_REGISTERED)
-		BTKeyCount = CONF_PAD_MAX_REGISTERED;
-	SwitchPairingImported = 0;
-	memset(&SwitchPairingBdaddr, 0, sizeof(SwitchPairingBdaddr));
-	sync_before_read(SwitchPairing, sizeof(*SwitchPairing));
-	record_valid = SwitchProPairingIsValid(SwitchPairing);
-	if(record_valid)
+	u8 imported = 0;
+
+	if(SwitchPairingSnapshotValid &&
+		hci_get_local_bd_addr(&local_bdaddr) == ERR_OK)
 	{
-		SwitchProPairingAddressToLwbt(SwitchPairing->controller_bda,
-			SwitchPairingBdaddr.addr);
-		if(hci_get_local_bd_addr(&local_bdaddr) == ERR_OK)
-		{
-			local_available = 1;
-			console_matches = SwitchProPairingConsoleMatchesLwbt(
-				SwitchPairing, local_bdaddr.addr);
-		}
+		local_available = 1;
+		console_matches = SwitchProPairingConsoleMatchesLwbt(
+			SwitchPairing, local_bdaddr.addr);
 	}
-	if(local_available && SwitchProPairingCanImport(SwitchPairing,
-		local_bdaddr.addr))
+	if(SwitchPairingSnapshotValid && local_available && console_matches)
 	{
 		for(i = 0; i < BTKeyCount; i++)
 		{
@@ -1823,11 +1824,22 @@ static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
 			if(i == BTKeyCount)
 				BTKeyCount++;
 			SwitchPairingImported = 1;
+			imported = 1;
 		}
 	}
-	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, record_valid,
-		local_available, console_matches, SwitchPairingImported,
-		BTKeyCount, 0, 0, 0, 0);
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, trace_stage,
+		SwitchPairingSnapshotValid, local_available, console_matches,
+		imported, BTKeyCount, 0, 0, 0);
+	return imported;
+}
+
+static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
+{
+	BTKeyCount = result > 0 ? (u32)result : 0;
+	if(BTKeyCount > CONF_PAD_MAX_REGISTERED)
+		BTKeyCount = CONF_PAD_MAX_REGISTERED;
+	SwitchPairingImported = 0;
+	BTImportSwitchPairingKey(0x11);
 	BTE_ApplyPatch(BTPatchCB);
 	return ERR_OK;
 }
@@ -1843,11 +1855,14 @@ u32 BTTimer = 0;
 u32 inited = 0;
 void BTInit(void)
 {
+	u8 pairing_status_ok;
 	SwitchInquiryRetryTimer = 0;
 	SwitchInquiryActive = 0;
 	SwitchInquiryAttempts = 0;
 	SwitchInquiryTargetFound = 0;
 	SwitchPairingImported = 0;
+	SwitchPairingSnapshotValid = 0;
+	memset(SwitchPairing, 0, sizeof(*SwitchPairing));
 	memset(&SwitchPairingBdaddr, 0, sizeof(SwitchPairingBdaddr));
 	BTPadRegistrationInitialized = 0;
 	BTPadRegisteredCount = 0;
@@ -1878,6 +1893,28 @@ void BTInit(void)
 		sizeof(struct SwitchProTraceBuffer), SWITCH_PRO_TRACE_REGION_SIZE,
 		0, 0, 0, 0, 0, 0);
 	sync_after_write(SwitchArmTrace, SWITCH_PRO_TRACE_REGION_SIZE);
+	/* Snapshot the loader handoff before any asynchronous HCI callbacks can
+	 * observe or alter state.  The non-sensitive status word proves each
+	 * loader step without exposing the address or link key in the trace. */
+	sync_before_read(SwitchPairingStatusShared,
+		sizeof(*SwitchPairingStatusShared));
+	sync_before_read(SwitchPairingShared, sizeof(*SwitchPairingShared));
+	memcpy(SwitchPairing, SwitchPairingShared, sizeof(*SwitchPairing));
+	pairing_status_ok = SwitchPairingStatusShared->magic ==
+		SWITCH_PRO_PAIRING_STATUS_MAGIC &&
+		(SwitchPairingStatusShared->flags &
+			SWITCH_PRO_PAIRING_STATUS_COPIED) != 0 &&
+		SwitchPairingStatusShared->record_checksum ==
+			SwitchPairing->checksum;
+	SwitchPairingSnapshotValid = pairing_status_ok &&
+		SwitchProPairingIsValid(SwitchPairing);
+	if(SwitchPairingSnapshotValid)
+		SwitchProPairingAddressToLwbt(SwitchPairing->controller_bda,
+			SwitchPairingBdaddr.addr);
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 0x10,
+		SwitchPairingStatusShared->magic == SWITCH_PRO_PAIRING_STATUS_MAGIC,
+		SwitchPairingStatusShared->flags, pairing_status_ok,
+		SwitchPairingSnapshotValid, 0, 0, 0, 0);
 	memset(SwitchPpcTrace, 0, SWITCH_PRO_TRACE_REGION_SIZE);
 	SwitchPpcTrace->magic = SWITCH_PRO_TRACE_MAGIC;
 	SwitchPpcTrace->version = SWITCH_PRO_TRACE_VERSION;

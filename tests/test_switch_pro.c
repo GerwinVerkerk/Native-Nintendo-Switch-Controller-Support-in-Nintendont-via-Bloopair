@@ -14,8 +14,13 @@ static void test_pairing_record(void)
 	u32 i;
 	assert(SWITCH_PRO_PAIRING_ARM_ADDR == 0x132f3000u);
 	assert(SWITCH_PRO_PAIRING_PPC_ADDR == 0x932f3000u);
+	assert(SWITCH_PRO_PAIRING_STATUS_ARM_ADDR == 0x132f3030u);
+	assert(SWITCH_PRO_PAIRING_STATUS_PPC_ADDR == 0x932f3030u);
 	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
 		SWITCH_PRO_PAIRING_ARM_ADDR);
+	assert((SWITCH_PRO_PAIRING_STATUS_PPC_ADDR & 0x1fffffffu) ==
+		SWITCH_PRO_PAIRING_STATUS_ARM_ADDR);
+	assert(sizeof(SwitchProPairingStatus) == 16);
 	memset(&pairing, 0, sizeof(pairing));
 	pairing.magic = SWITCH_PRO_PAIRING_MAGIC;
 	pairing.version = SWITCH_PRO_PAIRING_VERSION;

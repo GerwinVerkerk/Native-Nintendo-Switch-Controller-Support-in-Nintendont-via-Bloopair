@@ -262,23 +262,43 @@ static void LoadSwitchProPairingFromSd(void)
 	FIL file;
 	SwitchProPairing pairing;
 	SwitchProPairing *shared = (SwitchProPairing*)SWITCH_PRO_PAIRING_PPC_ADDR;
+	SwitchProPairingStatus *status =
+		(SwitchProPairingStatus*)SWITCH_PRO_PAIRING_STATUS_PPC_ADDR;
 	UINT read = 0;
 
 	memset(shared, 0, sizeof(*shared));
+	memset(status, 0, sizeof(*status));
+	status->magic = SWITCH_PRO_PAIRING_STATUS_MAGIC;
 	DCFlushRange(shared, sizeof(*shared));
+	DCFlushRange(status, sizeof(*status));
 	if(!devices[DEV_SD])
 		return;
+	status->flags |= SWITCH_PRO_PAIRING_STATUS_SD_MOUNTED;
 	if(f_open_char(&file, "sd:/" SWITCH_PRO_PAIRING_PATH,
 		FA_READ | FA_OPEN_EXISTING) != FR_OK)
-		return;
-	if(f_size(&file) == sizeof(pairing) &&
-		f_read(&file, &pairing, sizeof(pairing), &read) == FR_OK &&
-		read == sizeof(pairing) && SwitchProPairingIsValid(&pairing))
 	{
-		memcpy(shared, &pairing, sizeof(pairing));
-		DCFlushRange(shared, sizeof(*shared));
+		DCFlushRange(status, sizeof(*status));
+		return;
+	}
+	status->flags |= SWITCH_PRO_PAIRING_STATUS_OPENED;
+	if(f_size(&file) == sizeof(pairing))
+		status->flags |= SWITCH_PRO_PAIRING_STATUS_SIZED;
+	if((status->flags & SWITCH_PRO_PAIRING_STATUS_SIZED) &&
+		f_read(&file, &pairing, sizeof(pairing), &read) == FR_OK &&
+		read == sizeof(pairing))
+	{
+		status->flags |= SWITCH_PRO_PAIRING_STATUS_READ;
+		status->record_checksum = pairing.checksum;
+		if(SwitchProPairingIsValid(&pairing))
+		{
+			status->flags |= SWITCH_PRO_PAIRING_STATUS_VALID;
+			memcpy(shared, &pairing, sizeof(pairing));
+			DCFlushRange(shared, sizeof(*shared));
+			status->flags |= SWITCH_PRO_PAIRING_STATUS_COPIED;
+		}
 	}
 	f_close(&file);
+	DCFlushRange(status, sizeof(*status));
 }
 
 /**

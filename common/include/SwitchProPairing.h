@@ -8,8 +8,25 @@
 #define SWITCH_PRO_PAIRING_VERSION 1u
 #define SWITCH_PRO_PAIRING_ARM_ADDR 0x132f3000u
 #define SWITCH_PRO_PAIRING_PPC_ADDR 0x932f3000u
+#define SWITCH_PRO_PAIRING_STATUS_ARM_ADDR 0x132f3030u
+#define SWITCH_PRO_PAIRING_STATUS_PPC_ADDR 0x932f3030u
 #define SWITCH_PRO_PAIRING_PATH    "wiiu/bloopair/nintendont-switch-pro.bin"
 #define SWITCH_PRO_PAIRING_TYPE    0x24u
+
+#define SWITCH_PRO_PAIRING_STATUS_MAGIC 0x53504253u
+#define SWITCH_PRO_PAIRING_STATUS_SD_MOUNTED (1u << 0)
+#define SWITCH_PRO_PAIRING_STATUS_OPENED     (1u << 1)
+#define SWITCH_PRO_PAIRING_STATUS_SIZED      (1u << 2)
+#define SWITCH_PRO_PAIRING_STATUS_READ       (1u << 3)
+#define SWITCH_PRO_PAIRING_STATUS_VALID      (1u << 4)
+#define SWITCH_PRO_PAIRING_STATUS_COPIED     (1u << 5)
+
+typedef struct __attribute__((packed)) {
+	uint32_t magic;
+	uint32_t flags;
+	uint32_t record_checksum;
+	uint32_t reserved;
+} SwitchProPairingStatus;
 
 typedef struct __attribute__((packed)) {
 	uint32_t magic;
@@ -98,5 +115,10 @@ static inline int SwitchProPairingCanImport(const SwitchProPairing *pairing,
 typedef char SwitchProPairingSizeCheck[(sizeof(SwitchProPairing) == 48) ? 1 : -1];
 typedef char SwitchProPairingAddressAliasCheck[
 	((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) == SWITCH_PRO_PAIRING_ARM_ADDR) ? 1 : -1];
+typedef char SwitchProPairingStatusSizeCheck[
+	(sizeof(SwitchProPairingStatus) == 16) ? 1 : -1];
+typedef char SwitchProPairingStatusAddressAliasCheck[
+	((SWITCH_PRO_PAIRING_STATUS_PPC_ADDR & 0x1fffffffu) ==
+	SWITCH_PRO_PAIRING_STATUS_ARM_ADDR) ? 1 : -1];
 
 #endif
