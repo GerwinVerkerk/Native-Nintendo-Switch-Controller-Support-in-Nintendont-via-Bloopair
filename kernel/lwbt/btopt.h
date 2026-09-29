@@ -239,7 +239,7 @@ void bt_log(const char *filename,int line_nb,char *msg);
 
 /* ---------- Memory options ---------- */
 #define MAX_NUM_CLIENTS					6 /* Maximum number of connected Bluetooth clients. No more than 6 */ 
-#define MAX_NUM_OPT_CLIENTS             10 /* Maximum number of possible Bluetooth clients we might listen to */
+#define MAX_NUM_OPT_CLIENTS             11 /* Ten vWii records plus one imported Switch Pro */
 
 #define MEMB_NUM_HCI_PCB				1 /* Always set to one */
 #define MEMB_NUM_HCI_LINK				MAX_NUM_CLIENTS /* One for DT + One per ACL connection */

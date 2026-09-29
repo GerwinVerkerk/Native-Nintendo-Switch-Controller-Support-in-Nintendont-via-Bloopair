@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "usbstorage.h"
 #include "SDI.h"
 #include "ff_utf8.h"
+#include "../common/include/SwitchProMinimalStatus.h"
 
 //#define USE_OSREPORTDM 1
 
@@ -54,6 +55,25 @@ extern u32 s_cnt;
 static FATFS *fatfs = NULL;
 //this is just a single / as u16, easier to write in hex
 static const WCHAR fatDevName[2] = { 0x002F, 0x0000 };
+
+static void WriteSwitchProMinimalStatus(void)
+{
+	FIL file;
+	UINT wrote = 0;
+	SwitchProMinimalStatus *status =
+		(SwitchProMinimalStatus*)SWITCH_PRO_STATUS_ARM_ADDR;
+
+	sync_before_read(status, sizeof(*status));
+	if(status->magic != SWITCH_PRO_STATUS_MAGIC ||
+		status->version != SWITCH_PRO_STATUS_VERSION ||
+		status->size != sizeof(*status))
+		return;
+	if(f_open_char(&file, "/" SWITCH_PRO_STATUS_PATH,
+		FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+		return;
+	f_write(&file, status, sizeof(*status), &wrote);
+	f_close(&file);
+}
 
 extern u32 SI_IRQ;
 extern bool DI_IRQ, EXI_IRQ;
@@ -509,6 +529,8 @@ int _main( int argc, char *argv[] )
 		if(reset_status == 0x7DEA || (read32(HW_GPIO_IN) & GPIO_POWER))
 		{
 			DIFinishAsync();
+			if(reset_status == 0x7DEA)
+				WriteSwitchProMinimalStatus();
 			#ifdef PATCHALL
 			BTE_Shutdown();
 			#endif
@@ -541,6 +563,8 @@ int _main( int argc, char *argv[] )
 
 	if( ConfigGetConfig(NIN_CFG_MEMCARDEMU) )
 		EXIShutdown();
+
+	WriteSwitchProMinimalStatus();
 
 	if (ConfigGetConfig(NIN_CFG_LOG))
 		closeLog();

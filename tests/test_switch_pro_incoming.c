@@ -1,0 +1,218 @@
+#include <assert.h>
+#include <string.h>
+
+#include "SwitchProIncoming.h"
+#include "SwitchProPairing.h"
+#include "SwitchProMinimalStatus.h"
+
+static void make_pairing(SwitchProPairing *pairing)
+{
+	u32 i;
+	memset(pairing, 0, sizeof(*pairing));
+	pairing->magic = SWITCH_PRO_PAIRING_MAGIC;
+	pairing->version = SWITCH_PRO_PAIRING_VERSION;
+	pairing->size = sizeof(*pairing);
+	pairing->controller_type = SWITCH_PRO_PAIRING_TYPE;
+	pairing->vendor_id = 0x057e;
+	pairing->product_id = 0x2009;
+	for(i = 0; i < 6; i++)
+	{
+		pairing->controller_bda[i] = i + 1;
+		pairing->console_bda[i] = i + 11;
+	}
+	for(i = 0; i < 16; i++)
+		pairing->link_key[i] = i + 21;
+	pairing->checksum = SwitchProPairingChecksum(pairing);
+}
+
+static void test_pairing_record(void)
+{
+	SwitchProPairing pairing;
+	u8 lwbt[6];
+	const u8 expected[6] = {6, 5, 4, 3, 2, 1};
+	make_pairing(&pairing);
+	assert(sizeof(pairing) == 48);
+	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
+	assert(sizeof(SwitchProMinimalStatus) == 128);
+	assert((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
+		SWITCH_PRO_STATUS_ARM_ADDR);
+	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
+		SWITCH_PRO_PAIRING_ARM_ADDR);
+	assert(SwitchProPairingIsValid(&pairing));
+	SwitchProPairingAddressToLwbt(pairing.controller_bda, lwbt);
+	assert(memcmp(lwbt, expected, sizeof(lwbt)) == 0);
+	pairing.link_key[3] ^= 0x80;
+	assert(!SwitchProPairingIsValid(&pairing));
+	pairing.link_key[3] ^= 0x80;
+	pairing.checksum = SwitchProPairingChecksum(&pairing);
+	pairing.product_id = 0x2008;
+	assert(!SwitchProPairingIsValid(&pairing));
+}
+
+static void test_registration_is_independent_and_idempotent(void)
+{
+	struct SwitchProIncomingState state;
+	SwitchProIncomingReset(&state);
+	assert(!SwitchProIncomingReady(&state));
+	assert(!SwitchProIncomingNeedsListener(&state));
+	SwitchProIncomingImported(&state);
+	assert(SwitchProIncomingNeedsListener(&state));
+	SwitchProIncomingListener(&state, -1);
+	assert(!state.listener_registered);
+	assert(SwitchProIncomingNeedsListener(&state));
+	SwitchProIncomingListener(&state, 0);
+	SwitchProIncomingListener(&state, 0);
+	assert(state.listener_registered == 1);
+	assert(!SwitchProIncomingNeedsListener(&state));
+}
+
+static void test_transport_both_channel_orders(void)
+{
+	struct SwitchProIncomingState state;
+	u32 reverse;
+	for(reverse = 0; reverse < 2; reverse++)
+	{
+		SwitchProIncomingReset(&state);
+		SwitchProIncomingImported(&state);
+		SwitchProIncomingListener(&state, 0);
+		SwitchProIncomingACL(&state, 0);
+		SwitchProIncomingAuthentication(&state, 0);
+		SwitchProIncomingEncryption(&state, 0, 1);
+		if(reverse)
+		{
+			SwitchProIncomingChannels(&state, 0, 1);
+			assert(!SwitchProIncomingReady(&state));
+			SwitchProIncomingChannels(&state, 1, 1);
+		}
+		else
+		{
+			SwitchProIncomingChannels(&state, 1, 0);
+			assert(!SwitchProIncomingReady(&state));
+			SwitchProIncomingChannels(&state, 1, 1);
+		}
+		assert(SwitchProIncomingReady(&state));
+		assert(state.connected);
+	}
+}
+
+static void test_security_failure_blocks_hid(void)
+{
+	struct SwitchProIncomingState state;
+	SwitchProIncomingReset(&state);
+	SwitchProIncomingImported(&state);
+	SwitchProIncomingListener(&state, 0);
+	SwitchProIncomingACL(&state, 0);
+	SwitchProIncomingAuthentication(&state, 5);
+	SwitchProIncomingEncryption(&state, 0, 1);
+	SwitchProIncomingChannels(&state, 1, 1);
+	assert(!SwitchProIncomingReady(&state));
+}
+
+static void test_basic_report_end_to_end(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[12] = {
+		0x3f, 0x02 | 0x10 | 0x40, 0x01, 0x01,
+		0x00, 0x80, 0x00, 0x80, 0xff, 0xff, 0x00, 0x00
+	};
+
+	SwitchProIncomingReset(&state);
+	SwitchProIncomingImported(&state);
+	SwitchProIncomingListener(&state, 0);
+	SwitchProIncomingACL(&state, 0);
+	SwitchProIncomingAuthentication(&state, 0);
+	SwitchProIncomingEncryption(&state, 0, 1);
+	SwitchProIncomingChannels(&state, 1, 1);
+	assert(SwitchProIncomingReady(&state));
+	assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)) == 0);
+	assert(!state.input_valid);
+	assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)) == 1);
+	assert(state.basic_reports == 2);
+	assert(state.input_valid);
+	assert(state.input.left_x == 0 && state.input.left_y == 0);
+	assert(state.input.right_x == 127 && state.input.right_y == 127);
+	assert(state.input.buttons & SWITCH_PRO_BTN_A);
+	assert(state.input.buttons & SWITCH_PRO_BTN_L);
+	assert(state.input.buttons & SWITCH_PRO_BTN_ZL);
+	assert(state.input.buttons & SWITCH_PRO_BTN_MINUS);
+	assert(state.input.buttons & SWITCH_PRO_BTN_UP);
+	assert(state.input.buttons & SWITCH_PRO_BTN_RIGHT);
+}
+
+static void test_basic_dpad(void)
+{
+	static const u32 expected[] = {
+		SWITCH_PRO_BTN_UP,
+		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_RIGHT,
+		SWITCH_PRO_BTN_DOWN,
+		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_LEFT,
+		SWITCH_PRO_BTN_LEFT,
+		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_LEFT,
+		0
+	};
+	struct SwitchProIncomingState state;
+	u8 report[12];
+	u32 i;
+	for(i = 0; i < sizeof(expected) / sizeof(expected[0]); i++)
+	{
+		memset(report, 0, sizeof(report));
+		report[0] = 0x3f;
+		report[3] = i;
+		report[5] = report[7] = report[9] = report[11] = 0x80;
+		SwitchProIncomingReset(&state);
+		assert(!SwitchProIncomingParseBasic(&state, report, sizeof(report)));
+		assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)));
+		assert(state.input.buttons == expected[i]);
+	}
+}
+
+static void test_basic_button_bits(void)
+{
+	struct ButtonCase {
+		u8 offset;
+		u8 bit;
+		u32 expected;
+	};
+	static const struct ButtonCase cases[] = {
+		{1, 0x02, SWITCH_PRO_BTN_A},
+		{1, 0x01, SWITCH_PRO_BTN_B},
+		{1, 0x08, SWITCH_PRO_BTN_X},
+		{1, 0x04, SWITCH_PRO_BTN_Y},
+		{1, 0x10, SWITCH_PRO_BTN_L},
+		{1, 0x20, SWITCH_PRO_BTN_R},
+		{1, 0x40, SWITCH_PRO_BTN_ZL},
+		{1, 0x80, SWITCH_PRO_BTN_ZR},
+		{2, 0x02, SWITCH_PRO_BTN_PLUS},
+		{2, 0x01, SWITCH_PRO_BTN_MINUS},
+		{2, 0x10, SWITCH_PRO_BTN_HOME}
+	};
+	struct SwitchProIncomingState state;
+	u8 report[12];
+	u32 i;
+	for(i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+	{
+		memset(report, 0, sizeof(report));
+		report[0] = 0x3f;
+		report[3] = 8;
+		report[5] = report[7] = report[9] = report[11] = 0x80;
+		report[cases[i].offset] = cases[i].bit;
+		SwitchProIncomingReset(&state);
+		assert(!SwitchProIncomingParseBasic(&state, report, sizeof(report)));
+		assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)));
+		assert(state.input.buttons == cases[i].expected);
+	}
+}
+
+int main(void)
+{
+	test_pairing_record();
+	test_registration_is_independent_and_idempotent();
+	test_transport_both_channel_orders();
+	test_security_failure_blocks_hid();
+	test_basic_report_end_to_end();
+	test_basic_dpad();
+	test_basic_button_bits();
+	return 0;
+}
