@@ -1,52 +1,59 @@
-# Minimal incoming Switch Pro support
+# Incoming original Switch Pro support
 
-This branch deliberately supports one connection path only:
+This branch supports original Nintendo Switch Pro Controllers paired on the
+Wii U by Bloopair. Pairing still happens in Wii U mode; Nintendont only accepts
+authenticated incoming reconnects after control transfers to vWii.
 
-1. Bloopair pairs an original Nintendo Switch Pro Controller.
-2. Koopair exports the 48-byte pairing record to
-   `sd:/wiiu/bloopair/nintendont-switch-pro.bin`.
-   Pairing record version 2 stores the link key in the exact byte order used
-   by an HCI Link Key Request Reply. Version 1 records are rejected.
-3. The Nintendont loader validates the record and copies it to reserved shared
-   memory.
-4. The ARM kernel registers one dedicated, idempotent incoming HID listener for
-   that controller address before the normal vWii listeners.
-5. An A-wake connection is authenticated with the exported link key and then
-   encrypted.
-6. Nintendont accepts incoming HID control PSM `0x11` and interrupt PSM `0x13`
-   in either order.  The callbacks only mark the connection pending.  A later
-   Bluetooth processing tick verifies the aggregate BTE state and both actual
-   L2CAP PCBs are open before an idempotent ready transition exposes the
-   controller.  A bounded two-second timeout covers a channel that never
-   reaches the open state.
-7. Nintendont sends the exact twelve-command `hid-nintendo` sequence captured
-   from the original controller: Device Info, the six SPI reads, IMU enable,
-   continuous report mode `0x30`, vibration enable, player LED, and home light.
-   Each command must receive its matching positive `0x21` response and is
-   retried at most three times.
-8. Device Info confirms identity. Native `0x30` input reports are then
-   translated to the existing `C_CCP`/`BTPadCont` contract. Basic `0x3f`
-   reports observed during initialization are deliberately not published.
+## Pairing handoff
 
-The incoming path does not perform inquiry, in-game pairing, outgoing HID, or
-remote-name detection. The SPI responses are requested to mirror the measured
-Linux transaction exactly; fixed safe stick scaling remains in use until the
-calibration data is consumed by a later change.
+Bloopair's Aroma package automatically maintains
+`sd:/wiiu/bloopair/nintendont-switch-pro.bin`. The fixed 140-byte version-3
+record contains the Wii U Bluetooth address and up to four entries containing
+controller address, HCI-order link key, key type, controller type and VID/PID.
+Bloopair updates it atomically when a pairing becomes available, replaces a
+key after re-pairing and drops entries removed from the Wii U device database.
+No address or link key is written to diagnostics.
 
-The listener pool reserves capacity for all ten existing vWii records plus the
-one imported Switch Pro record.  Partial listener allocation is retried without
-duplicating the control listener.
+Nintendont cannot call Bloopair after entering vWii: Bloopair patches IOSU's
+IOS-PAD and exposes its extension through Wii U `/dev/usb/btrm`, while the
+Nintendont loader runs under vWii IOS58 and uses FatFS. The loader therefore
+validates the local handoff record, copies it to reserved shared memory, and
+the ARM kernel consumes that copy. A legacy version-2 single-controller file
+is accepted for rollback compatibility.
+
+The sync component requires Aroma's Wii U Plugin System. Tiramisu has no WUPS
+runtime, so Bloopair retains Koopair's explicitly labelled manual fallback for
+that environment.
+
+## Connection stateflow
+
+1. The loader validates the record and copies it to reserved shared memory.
+2. The ARM kernel registers one dedicated, idempotent incoming HID listener
+   per imported controller address before the normal vWii listeners.
+3. An A-wake connection is authenticated with that controller's imported link
+   key and then encrypted.
+4. Nintendont accepts incoming HID control PSM `0x11` and interrupt PSM `0x13`
+   in either order. Callbacks mark the connection pending; a later Bluetooth
+   tick verifies aggregate BTE state and both L2CAP PCBs before publication.
+5. Each slot runs the twelve-command `hid-nintendo` initialization sequence.
+   Commands require matching positive `0x21` responses and have bounded retry.
+6. Device Info confirms identity. Native `0x30` input reports are translated
+   to the existing `C_CCP`/`BTPadCont` contract and assigned to a free
+   GameCube channel. Basic `0x3f` reports are not published.
+7. Player LEDs follow the definitive GameCube channel and are reapplied after
+   reconnect or reassignment without sending on every input report.
+
+The incoming path does not perform inquiry, in-game pairing, outgoing HID or
+remote-name detection. Pairing remains owned by Bloopair in Wii U mode.
 
 ## Diagnostic status
 
-During the game the kernel maintains a version-3, 128-byte status record
-containing only booleans, result codes, counters, the assigned GameCube
-channel, the aggregate BTE state, both L2CAP states, deferred pump counts, and
-initialization send results.  It never contains Bluetooth addresses or
-link-key bytes.  On a normal game exit or the Nintendont exit combination it
-is written once to `switch-pro-minimal.bin` on the active game device.  At the
-next Nintendont start, a USB copy is copied to SD when both devices are
-mounted.
+During the game the kernel maintains a version-7, 256-byte status record with
+bounded per-slot counters, channels, initialization ACKs and raw/published
+left-Y extrema. It never contains Bluetooth addresses or link-key bytes. On a
+normal game exit or the Nintendont exit combination it is written once to
+`switch-pro-minimal.bin` on the active game device. At the next Nintendont
+start, a USB copy is copied to SD when both devices are mounted.
 
 Decode it with:
 
