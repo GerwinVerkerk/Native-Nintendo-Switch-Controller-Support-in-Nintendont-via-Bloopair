@@ -57,6 +57,7 @@ struct SwitchProIncomingState {
 	u8 encrypted;
 	u8 control_open;
 	u8 interrupt_open;
+	u8 transport_ready;
 	u8 connected;
 	u8 finalized;
 	u8 init_started;
@@ -89,6 +90,8 @@ void SwitchProIncomingEncryption(struct SwitchProIncomingState *state,
 	s32 result, u8 enabled);
 void SwitchProIncomingChannels(struct SwitchProIncomingState *state,
 	u8 control_open, u8 interrupt_open);
+void SwitchProIncomingTransport(struct SwitchProIncomingState *state,
+	u8 transport_ready);
 u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state);
 u8 SwitchProIncomingNeedsFinalize(const struct SwitchProIncomingState *state);
 void SwitchProIncomingFinalized(struct SwitchProIncomingState *state);

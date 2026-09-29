@@ -48,6 +48,7 @@ static SwitchProPairing SwitchPairing ALIGNED(32);
 static struct bd_addr SwitchAddress;
 static u8 BTStackReady = 0;
 static u32 SwitchInitTimer = 0;
+static u32 SwitchTransportTimer = 0;
 static SwitchProMinimalStatus *SwitchStatus =
 	(SwitchProMinimalStatus*)SWITCH_PRO_STATUS_ARM_ADDR;
 
@@ -63,6 +64,7 @@ static const u8 LEDState[] = { 0x10, 0x20, 0x40, 0x80, 0xF0 };
 
 #define CHAN_NOT_SET 4
 #define SWITCH_PRO_INIT_RETRY_TICKS 189843
+#define SWITCH_PRO_TRANSPORT_TIMEOUT_SECONDS 2
 
 #define TRANSFER_CONNECT 0
 #define TRANSFER_EXT1 1
@@ -137,7 +139,10 @@ static s32 BTSendSwitchInit(u8 retry)
 		return ERR_VAL;
 	}
 	SwitchInitTimer = read32(HW_TIMER);
+	SwitchStatus->init_send_attempts++;
 	result = bte_senddata(SwitchPadStatus.sock, report, len);
+	SwitchStatus->init_last_send_result = result;
+	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	if(result != ERR_OK)
 	{
 		SetSwitchStatusError(result);
@@ -175,6 +180,49 @@ static s32 BTTryFinalizeSwitchConnection(void)
 	SwitchProIncomingStartInit(&SwitchIncoming);
 	SetSwitchStatusFlag(SWITCH_PRO_STATUS_INIT_STARTED);
 	return BTSendSwitchInit(0);
+}
+
+static void BTPumpSwitchConnection(void)
+{
+	u32 bte_state = 0;
+	u32 control_state = L2CAP_CLOSED;
+	u32 data_state = L2CAP_CLOSED;
+	u8 transport_ready;
+
+	if(!SwitchProIncomingReady(&SwitchIncoming) || SwitchIncoming.finalized ||
+		SwitchIncoming.init_failed)
+		return;
+
+	SwitchStatus->transport_checks++;
+	transport_ready = bte_ready_for_data(SwitchPadStatus.sock,&bte_state,
+		&control_state,&data_state);
+	SwitchStatus->bte_state = bte_state;
+	SwitchStatus->control_l2cap_state = control_state;
+	SwitchStatus->interrupt_l2cap_state = data_state;
+	SwitchProIncomingTransport(&SwitchIncoming,transport_ready);
+	if(!transport_ready)
+	{
+		SwitchStatus->transport_deferred++;
+		SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_PENDING;
+		if(SwitchTransportTimer == 0)
+			SwitchTransportTimer = read32(HW_TIMER);
+		else if(TimerDiffSeconds(SwitchTransportTimer) >=
+			SWITCH_PRO_TRANSPORT_TIMEOUT_SECONDS)
+		{
+			SwitchIncoming.init_failed = 1;
+			SwitchStatus->transport_timeouts++;
+			SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_TIMEOUT |
+				SWITCH_PRO_STATUS_INIT_FAILED;
+			SetSwitchStatusError(ERR_CONN);
+		}
+		sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+		return;
+	}
+
+	SwitchTransportTimer = 0;
+	SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_READY;
+	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+	BTTryFinalizeSwitchConnection();
 }
 
 static void PublishSwitchInput(void)
@@ -778,7 +826,7 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 			return err;
 		SwitchProIncomingChannels(&SwitchIncoming,
 			pcb->ctl_pcb != NULL,pcb->data_pcb != NULL);
-		return BTTryFinalizeSwitchConnection();
+		return ERR_OK;
 	}
 
 	if(BTChannelsUsed >= 4)
@@ -855,6 +903,7 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 		SwitchProIncomingImported(&SwitchIncoming);
 		SwitchProIncomingListener(&SwitchIncoming,ERR_OK);
 		SwitchInitTimer = 0;
+		SwitchTransportTimer = 0;
 		SwitchPadStatus.controller = C_NOT_SET;
 		SwitchPadStatus.channel = CHAN_NOT_SET;
 		sync_after_write(&SwitchPadStatus, sizeof(SwitchPadStatus));
@@ -1018,7 +1067,7 @@ void BTSwitchIncomingEncryption(struct bd_addr *bdaddr,u8 result,u8 enabled)
 	bte_security_complete(SwitchPadStatus.sock,
 		(result == HCI_SUCCESS && enabled) ? ERR_OK : ERR_CONN);
 	if(result == HCI_SUCCESS && enabled)
-		BTTryFinalizeSwitchConnection();
+		SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_PENDING;
 }
 
 void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel)
@@ -1039,7 +1088,6 @@ void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel)
 		SwitchIncoming.control_open || control_channel,
 		SwitchIncoming.interrupt_open || !control_channel);
 	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
-	BTTryFinalizeSwitchConnection();
 }
 
 void BTSwitchIncomingCommandStatus(u8 command,u8 result)
@@ -1088,6 +1136,7 @@ void BTUpdateRegisters(void)
 		return;
 	if(BTStackReady && SwitchProIncomingNeedsListener(&SwitchIncoming))
 		EnsureSwitchPad();
+	BTPumpSwitchConnection();
 	if(SwitchIncoming.finalized && SwitchIncoming.awaiting_ack &&
 		!SwitchIncoming.init_complete && !SwitchIncoming.init_failed &&
 		SwitchInitTimer != 0 &&

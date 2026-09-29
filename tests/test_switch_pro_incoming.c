@@ -36,6 +36,7 @@ static void test_pairing_record(void)
 	assert(sizeof(pairing) == 48);
 	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
 	assert(sizeof(SwitchProMinimalStatus) == 128);
+	assert(SWITCH_PRO_STATUS_VERSION == 3);
 	assert((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
 		SWITCH_PRO_STATUS_ARM_ADDR);
 	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
@@ -100,6 +101,12 @@ static void test_transport_both_channel_orders(void)
 		}
 		assert(SwitchProIncomingReady(&state));
 		assert(state.connected);
+		/* Channel callbacks alone are not proof that BTE/L2CAP is ready
+		 * to transmit.  Finalization must wait for the later pump. */
+		assert(!SwitchProIncomingNeedsFinalize(&state));
+		SwitchProIncomingTransport(&state,0);
+		assert(!SwitchProIncomingNeedsFinalize(&state));
+		SwitchProIncomingTransport(&state,1);
 		assert(SwitchProIncomingNeedsFinalize(&state));
 		SwitchProIncomingFinalized(&state);
 		SwitchProIncomingFinalized(&state);
@@ -133,6 +140,8 @@ static void test_security_after_channels_also_finalizes(void)
 	assert(!SwitchProIncomingReady(&state));
 	SwitchProIncomingEncryption(&state, 0, 1);
 	assert(SwitchProIncomingReady(&state));
+	assert(!SwitchProIncomingNeedsFinalize(&state));
+	SwitchProIncomingTransport(&state,1);
 	assert(SwitchProIncomingNeedsFinalize(&state));
 }
 
@@ -254,6 +263,7 @@ static void make_ready(struct SwitchProIncomingState *state)
 	SwitchProIncomingACL(state, 0);
 	SwitchProIncomingEncryption(state, 0, 1);
 	SwitchProIncomingChannels(state, 1, 1);
+	SwitchProIncomingTransport(state, 1);
 	SwitchProIncomingFinalized(state);
 }
 

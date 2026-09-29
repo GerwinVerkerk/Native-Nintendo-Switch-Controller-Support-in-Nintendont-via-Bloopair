@@ -14,9 +14,11 @@ This branch deliberately supports one connection path only:
 5. An A-wake connection is authenticated with the exported link key and then
    encrypted.
 6. Nintendont accepts incoming HID control PSM `0x11` and interrupt PSM `0x13`
-   in either order.  An idempotent ready transition exposes the controller as
-   soon as encryption and both channels are proven, even when lwBT omits its
-   normal aggregate connection callback.
+   in either order.  The callbacks only mark the connection pending.  A later
+   Bluetooth processing tick verifies the aggregate BTE state and both actual
+   L2CAP PCBs are open before an idempotent ready transition exposes the
+   controller.  A bounded two-second timeout covers a channel that never
+   reaches the open state.
 7. Nintendont sends the exact twelve-command `hid-nintendo` sequence captured
    from the original controller: Device Info, the six SPI reads, IMU enable,
    continuous report mode `0x30`, vibration enable, player LED, and home light.
@@ -37,12 +39,14 @@ duplicating the control listener.
 
 ## Diagnostic status
 
-During the game the kernel maintains a 128-byte status record containing only
-booleans, result codes, counters, and the assigned GameCube channel.  It never
-contains Bluetooth addresses or link-key bytes.  On a normal game exit or the
-Nintendont exit combination it is written once to `switch-pro-minimal.bin` on
-the active game device.  At the next Nintendont start, a USB copy is copied to
-SD when both devices are mounted.
+During the game the kernel maintains a version-3, 128-byte status record
+containing only booleans, result codes, counters, the assigned GameCube
+channel, the aggregate BTE state, both L2CAP states, deferred pump counts, and
+initialization send results.  It never contains Bluetooth addresses or
+link-key bytes.  On a normal game exit or the Nintendont exit combination it
+is written once to `switch-pro-minimal.bin` on the active game device.  At the
+next Nintendont start, a USB copy is copied to SD when both devices are
+mounted.
 
 Decode it with:
 

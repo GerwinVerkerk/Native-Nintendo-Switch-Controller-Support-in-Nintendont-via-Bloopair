@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define SWITCH_PRO_STATUS_MAGIC    0x53504d53u
-#define SWITCH_PRO_STATUS_VERSION  2u
+#define SWITCH_PRO_STATUS_VERSION  3u
 #define SWITCH_PRO_STATUS_ARM_ADDR 0x132f3040u
 #define SWITCH_PRO_STATUS_PPC_ADDR 0x932f3040u
 #define SWITCH_PRO_STATUS_PATH     "switch-pro-minimal.bin"
@@ -31,6 +31,9 @@
 #define SWITCH_PRO_STATUS_FULL_PARSED    (1u << 19)
 #define SWITCH_PRO_STATUS_INIT_RETRIED   (1u << 20)
 #define SWITCH_PRO_STATUS_INIT_FAILED    (1u << 21)
+#define SWITCH_PRO_STATUS_TRANSPORT_PENDING (1u << 22)
+#define SWITCH_PRO_STATUS_TRANSPORT_READY   (1u << 23)
+#define SWITCH_PRO_STATUS_TRANSPORT_TIMEOUT (1u << 24)
 
 typedef struct __attribute__((packed)) {
 	uint32_t magic;
@@ -55,7 +58,15 @@ typedef struct __attribute__((packed)) {
 	uint32_t init_retries;
 	uint32_t full_reports;
 	uint32_t init_index;
-	uint32_t reserved[11];
+	uint32_t bte_state;
+	uint32_t control_l2cap_state;
+	uint32_t interrupt_l2cap_state;
+	uint32_t transport_checks;
+	uint32_t transport_deferred;
+	uint32_t init_send_attempts;
+	int32_t init_last_send_result;
+	uint32_t transport_timeouts;
+	uint32_t reserved[3];
 } SwitchProMinimalStatus;
 
 typedef char SwitchProMinimalStatusSizeCheck[

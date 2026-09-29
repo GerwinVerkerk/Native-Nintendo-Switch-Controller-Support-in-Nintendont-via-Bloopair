@@ -164,6 +164,14 @@ void SwitchProIncomingChannels(struct SwitchProIncomingState *state,
 	state->connected = SwitchProIncomingReady(state);
 }
 
+void SwitchProIncomingTransport(struct SwitchProIncomingState *state,
+	u8 transport_ready)
+{
+	if(state == 0)
+		return;
+	state->transport_ready = transport_ready != 0;
+}
+
 u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state)
 {
 	return state != 0 && state->imported && state->listener_registered &&
@@ -173,7 +181,8 @@ u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state)
 
 u8 SwitchProIncomingNeedsFinalize(const struct SwitchProIncomingState *state)
 {
-	return SwitchProIncomingReady(state) && !state->finalized;
+	return SwitchProIncomingReady(state) && state->transport_ready &&
+		!state->finalized && !state->init_failed;
 }
 
 void SwitchProIncomingFinalized(struct SwitchProIncomingState *state)

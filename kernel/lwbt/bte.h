@@ -134,6 +134,8 @@ void bte_received(struct bte_pcb *pcb, s32 (*recv)(void *arg,void *buffer,u16 le
 void bte_disconnected(struct bte_pcb *pcb,s32 (disconn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
 void bte_require_security(struct bte_pcb *pcb,u8 required);
 s32 bte_security_complete(struct bte_pcb *pcb,u8 err);
+u8 bte_ready_for_data(struct bte_pcb *pcb,u32 *bte_state,
+	u32 *control_state,u32 *data_state);
 
 s32 bte_registerdeviceasync(struct bte_pcb *pcb,struct bd_addr *bdaddr,s32 (*conn_cfm)(void *arg,struct bte_pcb *pcb,u8 err));
 

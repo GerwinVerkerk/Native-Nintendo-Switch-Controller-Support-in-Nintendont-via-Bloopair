@@ -691,6 +691,34 @@ s32 bte_security_complete(struct bte_pcb *pcb,u8 err)
 	return __bte_notify_connected(pcb);
 }
 
+u8 bte_ready_for_data(struct bte_pcb *pcb,u32 *bte_state,
+	u32 *control_state,u32 *data_state)
+{
+	u32 control = L2CAP_CLOSED;
+	u32 data = L2CAP_CLOSED;
+
+	if(pcb != NULL)
+	{
+		if(pcb->ctl_pcb != NULL)
+			control = pcb->ctl_pcb->state;
+		if(pcb->data_pcb != NULL)
+			data = pcb->data_pcb->state;
+		if(bte_state != NULL)
+			*bte_state = pcb->state;
+	}
+	else if(bte_state != NULL)
+		*bte_state = (u32)STATE_NOTREADY;
+	if(control_state != NULL)
+		*control_state = control;
+	if(data_state != NULL)
+		*data_state = data;
+
+	return pcb != NULL && pcb->state == (u32)STATE_CONNECTED &&
+		(!pcb->require_security || pcb->security_ready) &&
+		pcb->ctl_pcb != NULL && control == L2CAP_OPEN &&
+		pcb->data_pcb != NULL && data == L2CAP_OPEN;
+}
+
 err_t acl_wlp_completed(void *arg,struct bd_addr *bdaddr)
 {
 	//hci_sniff_mode(bdaddr,200,100,10,10);

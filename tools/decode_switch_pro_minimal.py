@@ -9,7 +9,8 @@ FLAGS = (
     "control_open", "interrupt_open", "connected", "basic_seen",
     "basic_parsed", "published", "init_started", "device_info",
     "report_mode", "init_complete", "full_seen", "full_parsed",
-    "init_retried", "init_failed",
+    "init_retried", "init_failed", "transport_pending",
+    "transport_ready", "transport_timeout",
 )
 
 
@@ -22,7 +23,7 @@ def main() -> int:
         raise SystemExit(f"unexpected size: {len(data)}")
     values = struct.unpack(">IHHIi17I11I", data)
     magic, version, size, flags, last_error = values[:5]
-    if magic != 0x53504D53 or version != 2 or size != 128:
+    if magic != 0x53504D53 or version != 3 or size != 128:
         raise SystemExit("invalid status header")
     names = (
         "listener_result", "acl_count", "key_requests", "auth_result",
@@ -30,11 +31,16 @@ def main() -> int:
         "basic_reports", "parsed_reports", "publishes", "channel",
         "command_reports", "init_sent", "init_acks", "init_retries",
         "full_reports", "init_index",
+        "bte_state", "control_l2cap_state", "interrupt_l2cap_state",
+        "transport_checks", "transport_deferred", "init_send_attempts",
+        "init_last_send_result", "transport_timeouts",
     )
     print(f"flags=0x{flags:08x} last_error={last_error}")
     for bit, name in enumerate(FLAGS):
         print(f"{name}={int(bool(flags & (1 << bit)))}")
-    for name, value in zip(names, values[5:22]):
+    for name, value in zip(names, values[5:30]):
+        if name == "init_last_send_result" and value & 0x80000000:
+            value -= 0x100000000
         print(f"{name}={value}")
     return 0
 
