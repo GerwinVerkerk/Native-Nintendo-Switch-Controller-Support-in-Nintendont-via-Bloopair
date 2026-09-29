@@ -900,20 +900,15 @@ u8 BTSwitchIncomingGetKey(struct bd_addr *bdaddr,u8 *key)
 
 u8 BTSwitchIncomingACL(struct bd_addr *bdaddr)
 {
-	s32 result;
 	if(!IsSwitchAddress(bdaddr))
 		return 0;
 	SwitchProIncomingACL(&SwitchIncoming,ERR_OK);
 	SwitchStatus->acl_count++;
 	SetSwitchStatusFlag(SWITCH_PRO_STATUS_ACL_CONNECTED);
-	result = hci_authentication_requested(bdaddr);
-	if(result == ERR_OK)
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_AUTH_REQUESTED);
-	if(result != ERR_OK)
-	{
-		SwitchProIncomingACL(&SwitchIncoming,result);
-		SetSwitchStatusError(result);
-	}
+	/* The controller owns security setup on an incoming stored-key
+	 * reconnect.  It requests the link key and enables encryption itself;
+	 * issuing a second Authentication Requested here makes the otherwise
+	 * valid reconnect end in HCI Authentication Failure (0x05). */
 	return 1;
 }
 
@@ -926,11 +921,12 @@ void BTSwitchIncomingAuthentication(struct bd_addr *bdaddr,u8 result)
 	SwitchStatus->auth_result = result;
 	if(result == HCI_SUCCESS)
 		SetSwitchStatusFlag(SWITCH_PRO_STATUS_AUTHENTICATED);
-	else
+	else if(!SwitchIncoming.encrypted)
 		SetSwitchStatusError(ERR_CONN);
 	if(result != HCI_SUCCESS)
 	{
-		bte_security_complete(SwitchPadStatus.sock,ERR_CONN);
+		if(!SwitchIncoming.encrypted)
+			bte_security_complete(SwitchPadStatus.sock,ERR_CONN);
 		return;
 	}
 	command_result = hci_set_connection_encrypt(bdaddr,1);
@@ -950,7 +946,10 @@ void BTSwitchIncomingEncryption(struct bd_addr *bdaddr,u8 result,u8 enabled)
 	SwitchProIncomingEncryption(&SwitchIncoming,result,enabled);
 	SwitchStatus->encrypt_result = result | ((u32)enabled << 8);
 	if(result == HCI_SUCCESS && enabled)
+	{
+		SetSwitchStatusFlag(SWITCH_PRO_STATUS_AUTHENTICATED);
 		SetSwitchStatusFlag(SWITCH_PRO_STATUS_ENCRYPTED);
+	}
 	else
 		SetSwitchStatusError(ERR_CONN);
 	bte_security_complete(SwitchPadStatus.sock,

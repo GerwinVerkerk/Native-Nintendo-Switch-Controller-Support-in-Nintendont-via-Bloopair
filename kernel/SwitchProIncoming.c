@@ -66,13 +66,22 @@ void SwitchProIncomingACL(struct SwitchProIncomingState *state, s32 result)
 void SwitchProIncomingAuthentication(struct SwitchProIncomingState *state,
 	s32 result)
 {
-	state->authenticated = result == 0;
+	if(result == 0)
+		state->authenticated = 1;
+	else if(!state->encrypted)
+		state->authenticated = 0;
 }
 
 void SwitchProIncomingEncryption(struct SwitchProIncomingState *state,
 	s32 result, u8 enabled)
 {
 	state->encrypted = result == 0 && enabled != 0;
+	/* A stored-key reconnect can enable encryption without emitting a
+	 * separate Authentication Complete event.  Successful encryption is
+	 * therefore the authoritative proof that link-key authentication
+	 * completed for this incoming connection. */
+	if(state->encrypted)
+		state->authenticated = 1;
 }
 
 void SwitchProIncomingChannels(struct SwitchProIncomingState *state,

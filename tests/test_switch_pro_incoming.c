@@ -84,8 +84,8 @@ static void test_transport_both_channel_orders(void)
 		SwitchProIncomingImported(&state);
 		SwitchProIncomingListener(&state, 0);
 		SwitchProIncomingACL(&state, 0);
-		SwitchProIncomingAuthentication(&state, 0);
 		SwitchProIncomingEncryption(&state, 0, 1);
+		assert(state.authenticated);
 		if(reverse)
 		{
 			SwitchProIncomingChannels(&state, 0, 1);
@@ -103,7 +103,21 @@ static void test_transport_both_channel_orders(void)
 	}
 }
 
-static void test_security_failure_blocks_hid(void)
+static void test_encrypted_reconnect_survives_redundant_auth_failure(void)
+{
+	struct SwitchProIncomingState state;
+	SwitchProIncomingReset(&state);
+	SwitchProIncomingImported(&state);
+	SwitchProIncomingListener(&state, 0);
+	SwitchProIncomingACL(&state, 0);
+	SwitchProIncomingEncryption(&state, 0, 1);
+	SwitchProIncomingAuthentication(&state, 5);
+	SwitchProIncomingChannels(&state, 1, 1);
+	assert(state.authenticated);
+	assert(SwitchProIncomingReady(&state));
+}
+
+static void test_encryption_failure_blocks_hid(void)
 {
 	struct SwitchProIncomingState state;
 	SwitchProIncomingReset(&state);
@@ -111,8 +125,9 @@ static void test_security_failure_blocks_hid(void)
 	SwitchProIncomingListener(&state, 0);
 	SwitchProIncomingACL(&state, 0);
 	SwitchProIncomingAuthentication(&state, 5);
-	SwitchProIncomingEncryption(&state, 0, 1);
+	SwitchProIncomingEncryption(&state, 5, 0);
 	SwitchProIncomingChannels(&state, 1, 1);
+	assert(!state.authenticated);
 	assert(!SwitchProIncomingReady(&state));
 }
 
@@ -128,7 +143,6 @@ static void test_basic_report_end_to_end(void)
 	SwitchProIncomingImported(&state);
 	SwitchProIncomingListener(&state, 0);
 	SwitchProIncomingACL(&state, 0);
-	SwitchProIncomingAuthentication(&state, 0);
 	SwitchProIncomingEncryption(&state, 0, 1);
 	SwitchProIncomingChannels(&state, 1, 1);
 	assert(SwitchProIncomingReady(&state));
@@ -218,7 +232,8 @@ int main(void)
 	test_pairing_record();
 	test_registration_is_independent_and_idempotent();
 	test_transport_both_channel_orders();
-	test_security_failure_blocks_hid();
+	test_encrypted_reconnect_survives_redundant_auth_failure();
+	test_encryption_failure_blocks_hid();
 	test_basic_report_end_to_end();
 	test_basic_dpad();
 	test_basic_button_bits();
