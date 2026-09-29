@@ -975,6 +975,10 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 				SwitchStatus->stored_address_matches++;
 				SwitchStatus->flags |=
 					SWITCH_PRO_STATUS_DUPLICATE_LISTENER;
+				/* The imported Switch listener already owns this address.
+				 * Registering the stored vWii entry afterwards would put its
+				 * L2CAP listeners at the head of the first-match list. */
+				continue;
 			}
 
 			if(strstr(BTDevices->registered[i].name, "-UC") != NULL)	//if wiiu pro controller
