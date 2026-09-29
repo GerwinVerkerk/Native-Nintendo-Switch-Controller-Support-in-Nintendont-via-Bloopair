@@ -35,8 +35,8 @@ static void test_pairing_record(void)
 	make_pairing(&pairing);
 	assert(sizeof(pairing) == 48);
 	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
-	assert(sizeof(SwitchProMinimalStatus) == 128);
-	assert(SWITCH_PRO_STATUS_VERSION == 4);
+	assert(sizeof(SwitchProMinimalStatus) == 144);
+	assert(SWITCH_PRO_STATUS_VERSION == 5);
 	assert(SWITCH_PRO_STATUS_OWNER_NONE == 0);
 	assert(SWITCH_PRO_STATUS_OWNER_DEDICATED == 1);
 	assert(SWITCH_PRO_STATUS_OWNER_REGULAR_BASE == 0x100);
@@ -300,6 +300,7 @@ static void test_exact_linux_init_sequence(void)
 	u16 len;
 
 	make_ready(&state);
+	SwitchProIncomingSetChannel(&state, 0);
 	SwitchProIncomingStartInit(&state);
 	assert(state.init_started);
 	for(i = 0; i < SWITCH_PRO_INIT_COMMAND_COUNT; i++)
@@ -330,6 +331,101 @@ static void test_exact_linux_init_sequence(void)
 	assert(state.init_sent == SWITCH_PRO_INIT_COMMAND_COUNT);
 	assert(state.init_acks == SWITCH_PRO_INIT_COMMAND_COUNT);
 	assert(!SwitchProIncomingBuildInit(&state, report, sizeof(report), 0));
+}
+
+static void test_player_led_channel_mapping_and_updates(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[16];
+	u8 reply[15];
+	u32 i;
+
+	assert(SwitchProIncomingPlayerLedMask(0) == 0x01);
+	assert(SwitchProIncomingPlayerLedMask(1) == 0x03);
+	assert(SwitchProIncomingPlayerLedMask(2) == 0x07);
+	assert(SwitchProIncomingPlayerLedMask(3) == 0x0f);
+	assert(SwitchProIncomingPlayerLedMask(4) == 0x00);
+
+	make_ready(&state);
+	SwitchProIncomingSetChannel(&state, 1);
+	SwitchProIncomingStartInit(&state);
+	for(i = 0; i < SWITCH_PRO_INIT_COMMAND_COUNT; i++)
+	{
+		u16 len = SwitchProIncomingBuildInit(&state, report,
+			sizeof(report), 0);
+		assert(len != 0);
+		if(report[10] == 0x30)
+			assert(report[11] == 0x03);
+		memset(reply, 0, sizeof(reply));
+		reply[0] = SWITCH_PRO_REPORT_COMMAND;
+		reply[13] = 0x80;
+		reply[14] = report[10];
+		if(report[10] == 0x10)
+		{
+			u8 spi_reply[20] = {0};
+			memcpy(spi_reply, reply, sizeof(reply));
+			memcpy(&spi_reply[15], &report[11], 5);
+			assert(SwitchProIncomingHandleReport(&state, spi_reply,
+				sizeof(spi_reply)) == SWITCH_PRO_EVENT_ACK);
+		}
+		else
+			assert(SwitchProIncomingHandleReport(&state, reply,
+				sizeof(reply)) == SWITCH_PRO_EVENT_ACK);
+	}
+	assert(state.applied_led_mask == 0x03);
+	assert(state.led_acks == 1);
+	assert(!SwitchProIncomingNeedsLedUpdate(&state));
+
+	SwitchProIncomingSetChannel(&state, 3);
+	assert(SwitchProIncomingNeedsLedUpdate(&state));
+	assert(SwitchProIncomingBuildLedUpdate(&state, report,
+		sizeof(report), 0) == 12);
+	assert(report[10] == 0x30 && report[11] == 0x0f);
+	assert(!SwitchProIncomingNeedsLedUpdate(&state));
+	memset(reply, 0, sizeof(reply));
+	reply[0] = SWITCH_PRO_REPORT_COMMAND;
+	reply[13] = 0x80;
+	reply[14] = 0x30;
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_ACK);
+	assert(state.applied_led_mask == 0x0f);
+	assert(state.led_acks == 2);
+	assert(!SwitchProIncomingNeedsLedUpdate(&state));
+	assert(!SwitchProIncomingBuildLedUpdate(&state, report,
+		sizeof(report), 0));
+}
+
+static void test_player_led_retry_is_bounded_and_reconnect_resets(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[16];
+	u32 i;
+
+	memset(&state, 0, sizeof(state));
+	state.init_complete = 1;
+	SwitchProIncomingSetChannel(&state, 2);
+	assert(SwitchProIncomingBuildLedUpdate(&state, report,
+		sizeof(report), 0) == 12);
+	assert(report[11] == 0x07);
+	for(i = 0; i < SWITCH_PRO_INIT_RETRY_MAX; i++)
+	{
+		assert(SwitchProIncomingBuildLedUpdate(&state, report,
+			sizeof(report), 1) == 12);
+		assert(report[11] == 0x07);
+	}
+	assert(!SwitchProIncomingBuildLedUpdate(&state, report,
+		sizeof(report), 1));
+	assert(state.led_failed);
+	assert(!state.led_awaiting_ack);
+	assert(!SwitchProIncomingNeedsLedUpdate(&state));
+
+	SwitchProIncomingReset(&state);
+	assert(state.desired_led_mask == 0);
+	assert(state.applied_led_mask == 0);
+	assert(state.led_acks == 0);
+	SwitchProIncomingSetChannel(&state, 0);
+	assert(state.desired_led_mask == 0x01);
+	assert(!state.led_failed);
 }
 
 static void test_init_retries_and_ack_validation(void)
@@ -447,6 +543,8 @@ int main(void)
 	test_basic_dpad();
 	test_basic_button_bits();
 	test_exact_linux_init_sequence();
+	test_player_led_channel_mapping_and_updates();
+	test_player_led_retry_is_bounded_and_reconnect_resets();
 	test_init_retries_and_ack_validation();
 	test_delayed_spi_ack_does_not_advance_next_read();
 	test_full_report_end_to_end();

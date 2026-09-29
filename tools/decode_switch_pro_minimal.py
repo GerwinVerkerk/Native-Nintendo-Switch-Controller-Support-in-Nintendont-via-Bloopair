@@ -20,11 +20,12 @@ def main() -> int:
         print(f"usage: {sys.argv[0]} switch-pro-minimal.bin", file=sys.stderr)
         return 2
     data = pathlib.Path(sys.argv[1]).read_bytes()
-    if len(data) != 128:
+    if len(data) not in (128, 144):
         raise SystemExit(f"unexpected size: {len(data)}")
-    values = struct.unpack(">IHHIi17I11I", data)
+    values = struct.unpack(">IHHIi" + "I" * ((len(data) - 16) // 4), data)
     magic, version, size, flags, last_error = values[:5]
-    if magic != 0x53504D53 or version not in (3, 4) or size != 128:
+    if (magic != 0x53504D53 or version not in (3, 4, 5) or
+            size != len(data) or (version == 5) != (size == 144)):
         raise SystemExit("invalid status header")
     names = (
         "listener_result", "acl_count", "key_requests", "auth_result",
@@ -36,8 +37,10 @@ def main() -> int:
         "transport_checks", "transport_deferred", "init_send_attempts",
         "init_last_send_result", "transport_timeouts",
         *(('stored_address_matches', 'control_channel_owner',
-           'interrupt_channel_owner') if version == 4 else
+           'interrupt_channel_owner') if version >= 4 else
           ('reserved_0', 'reserved_1', 'reserved_2')),
+        *(("led_desired_mask", "led_sent_mask", "led_acks",
+           "led_send_attempts") if version >= 5 else ()),
     )
     print(f"flags=0x{flags:08x} last_error={last_error}")
     for bit, name in enumerate(FLAGS):

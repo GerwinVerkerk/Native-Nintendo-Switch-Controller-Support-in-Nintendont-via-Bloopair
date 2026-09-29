@@ -38,7 +38,7 @@ static const struct SwitchProInitCommand SwitchProInitCommands[] = {
 	{0x40, 1, {0x01, 0, 0, 0, 0}},
 	{0x03, 1, {0x30, 0, 0, 0, 0}},
 	{0x48, 1, {0x01, 0, 0, 0, 0}},
-	{0x30, 1, {0x01, 0, 0, 0, 0}},
+	{0x30, 1, {0x00, 0, 0, 0, 0}},
 	{0x38, 5, {0x01, 0x00, 0x00, 0x11, 0x11}}
 };
 
@@ -203,6 +203,39 @@ void SwitchProIncomingStartInit(struct SwitchProIncomingState *state)
 	state->report_counter = 0;
 }
 
+u8 SwitchProIncomingPlayerLedMask(u8 channel)
+{
+	/* Nintendo's player patterns are cumulative: player N lights the first
+	 * N indicators.  Keep this protocol mapping explicit; Bloopair's direct
+	 * forwarding of Wii LED bits is not a player-number mapping. */
+	static const u8 masks[4] = {0x01, 0x03, 0x07, 0x0f};
+	return channel < 4 ? masks[channel] : 0;
+}
+
+void SwitchProIncomingSetChannel(struct SwitchProIncomingState *state,
+	u8 channel)
+{
+	u8 mask;
+	if(state == 0)
+		return;
+	mask = SwitchProIncomingPlayerLedMask(channel);
+	if(mask != 0)
+	{
+		if(mask != state->desired_led_mask)
+			state->led_failed = 0;
+		state->desired_led_mask = mask;
+	}
+}
+
+u8 SwitchProIncomingNeedsLedUpdate(
+	const struct SwitchProIncomingState *state)
+{
+	return state != 0 && state->init_complete &&
+		state->desired_led_mask != 0 && !state->led_awaiting_ack &&
+		!state->led_failed &&
+		state->desired_led_mask != state->applied_led_mask;
+}
+
 u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
 	u8 *report, u16 capacity, u8 retry)
 {
@@ -217,6 +250,8 @@ u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
 		(!retry && state->awaiting_ack))
 		return 0;
 	entry = &SwitchProInitCommands[state->init_index];
+	if(entry->command == 0x30 && !retry && state->desired_led_mask == 0)
+		return 0;
 	size = 11 + entry->data_len;
 	if(capacity < size)
 		return 0;
@@ -237,10 +272,55 @@ u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
 	report[10] = entry->command;
 	if(entry->data_len)
 		memcpy(&report[11], entry->data, entry->data_len);
+	if(entry->command == 0x30)
+	{
+		if(retry)
+			report[11] = state->sent_led_mask;
+		else
+		{
+			state->sent_led_mask = state->desired_led_mask;
+			report[11] = state->sent_led_mask;
+		}
+	}
 	state->pending_subcommand = entry->command;
 	state->awaiting_ack = 1;
 	state->init_sent++;
 	return size;
+}
+
+u16 SwitchProIncomingBuildLedUpdate(struct SwitchProIncomingState *state,
+	u8 *report, u16 capacity, u8 retry)
+{
+	if(state == 0 || report == 0 || capacity < 12 ||
+		!state->init_complete || state->desired_led_mask == 0)
+		return 0;
+	if((retry && !state->led_awaiting_ack) ||
+		(!retry && (state->led_awaiting_ack ||
+		state->desired_led_mask == state->applied_led_mask)))
+		return 0;
+	if(retry)
+	{
+		if(state->led_retries >= SWITCH_PRO_INIT_RETRY_MAX)
+		{
+			state->led_awaiting_ack = 0;
+			state->led_failed = 1;
+			return 0;
+		}
+		state->led_retries++;
+	}
+	else
+	{
+		state->led_retries = 0;
+		state->sent_led_mask = state->desired_led_mask;
+	}
+	memset(report, 0, 12);
+	report[0] = 0x01;
+	report[1] = state->report_counter++ & 0x0f;
+	report[10] = 0x30;
+	report[11] = state->sent_led_mask;
+	state->led_awaiting_ack = 1;
+	state->led_sent++;
+	return 12;
 }
 
 s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
@@ -262,6 +342,16 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 		return SWITCH_PRO_EVENT_NONE;
 
 	state->command_reports++;
+	if(state->led_awaiting_ack && report[14] == 0x30)
+	{
+		if((report[13] & 0x80) == 0)
+			return SWITCH_PRO_EVENT_NEGATIVE_ACK;
+		state->led_awaiting_ack = 0;
+		state->led_retries = 0;
+		state->applied_led_mask = state->sent_led_mask;
+		state->led_acks++;
+		return SWITCH_PRO_EVENT_ACK;
+	}
 	if(!state->init_started || state->init_complete || state->init_failed ||
 		!state->awaiting_ack ||
 		state->init_index >= SWITCH_PRO_INIT_COMMAND_COUNT)
@@ -282,6 +372,11 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 	state->pending_subcommand = 0;
 	state->init_retries = 0;
 	state->init_acks++;
+	if(entry->command == 0x30)
+	{
+		state->applied_led_mask = state->sent_led_mask;
+		state->led_acks++;
+	}
 	if(state->init_index == 0)
 		state->identity_confirmed = 1;
 	state->init_index++;

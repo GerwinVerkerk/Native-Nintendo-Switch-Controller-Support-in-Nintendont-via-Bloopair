@@ -71,11 +71,19 @@ struct SwitchProIncomingState {
 	u8 identity_confirmed;
 	u8 drop_first_basic_report;
 	u8 input_valid;
+	u8 desired_led_mask;
+	u8 sent_led_mask;
+	u8 applied_led_mask;
+	u8 led_awaiting_ack;
+	u8 led_retries;
+	u8 led_failed;
 	u16 basic_reports;
 	u16 command_reports;
 	u16 full_reports;
 	u16 init_sent;
 	u16 init_acks;
+	u16 led_sent;
+	u16 led_acks;
 	struct SwitchProIncomingInput input;
 };
 
@@ -96,7 +104,14 @@ u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state);
 u8 SwitchProIncomingNeedsFinalize(const struct SwitchProIncomingState *state);
 void SwitchProIncomingFinalized(struct SwitchProIncomingState *state);
 void SwitchProIncomingStartInit(struct SwitchProIncomingState *state);
+u8 SwitchProIncomingPlayerLedMask(u8 channel);
+void SwitchProIncomingSetChannel(struct SwitchProIncomingState *state,
+	u8 channel);
+u8 SwitchProIncomingNeedsLedUpdate(
+	const struct SwitchProIncomingState *state);
 u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
+	u8 *report, u16 capacity, u8 retry);
+u16 SwitchProIncomingBuildLedUpdate(struct SwitchProIncomingState *state,
 	u8 *report, u16 capacity, u8 retry);
 s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 	const u8 *report, u16 len);

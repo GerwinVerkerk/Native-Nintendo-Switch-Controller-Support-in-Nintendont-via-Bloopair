@@ -159,6 +159,27 @@ static s32 BTSendSwitchInit(u8 retry)
 	return ERR_OK;
 }
 
+static s32 BTSendSwitchLed(u8 retry)
+{
+	u8 report[12];
+	u16 len = SwitchProIncomingBuildLedUpdate(&SwitchIncoming, report,
+		sizeof(report), retry);
+	s32 result;
+
+	if(len == 0)
+		return ERR_VAL;
+	SwitchInitTimer = read32(HW_TIMER);
+	SwitchStatus->led_send_attempts++;
+	SwitchStatus->led_desired_mask = SwitchIncoming.desired_led_mask;
+	SwitchStatus->led_sent_mask = SwitchIncoming.sent_led_mask;
+	result = bte_senddata(SwitchPadStatus.sock, report, len);
+	SwitchStatus->init_last_send_result = result;
+	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+	if(result != ERR_OK)
+		SetSwitchStatusError(result);
+	return result;
+}
+
 static s32 BTTryFinalizeSwitchConnection(void)
 {
 	if(SwitchIncoming.finalized)
@@ -307,6 +328,9 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 				SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_COMPLETE;
 			else
 				BTSendSwitchInit(0);
+			SwitchStatus->led_acks = SwitchIncoming.led_acks;
+			if(SwitchProIncomingNeedsLedUpdate(&SwitchIncoming))
+				BTSendSwitchLed(0);
 		}
 		else if(event == SWITCH_PRO_EVENT_INPUT)
 		{
@@ -1171,11 +1195,17 @@ void BTUpdateRegisters(void)
 	if(BTStackReady && SwitchProIncomingNeedsListener(&SwitchIncoming))
 		EnsureSwitchPad();
 	BTPumpSwitchConnection();
+	if(SwitchProIncomingNeedsLedUpdate(&SwitchIncoming))
+		BTSendSwitchLed(0);
 	if(SwitchIncoming.finalized && SwitchIncoming.awaiting_ack &&
 		!SwitchIncoming.init_complete && !SwitchIncoming.init_failed &&
 		SwitchInitTimer != 0 &&
 		TimerDiffTicks(SwitchInitTimer) >= SWITCH_PRO_INIT_RETRY_TICKS)
 		BTSendSwitchInit(1);
+	if(SwitchIncoming.finalized && SwitchIncoming.led_awaiting_ack &&
+		SwitchInitTimer != 0 &&
+		TimerDiffTicks(SwitchInitTimer) >= SWITCH_PRO_INIT_RETRY_TICKS)
+		BTSendSwitchLed(1);
 
 	if(intr == 1)
 	{
@@ -1245,7 +1275,13 @@ void BTUpdateRegisters(void)
 			BTPadConnected[i]->channel = CurChan;
 			BTPadConnected[i]->rumble = CurRumble;
 			if(IsSwitchPad(BTPadConnected[i]))
+			{
+				SwitchProIncomingSetChannel(&SwitchIncoming,CurChan);
+				SwitchStatus->channel = CurChan;
+				SwitchStatus->led_desired_mask =
+					SwitchIncoming.desired_led_mask;
 				PublishSwitchInput();
+			}
 			else if(BTPadConnected[i]->transfertype == 0x3D || BTPadConnected[i]->controller & (C_RUMBLE_WM | C_NUN) || ConfigGetConfig(NIN_CFG_CC_RUMBLE))
 				BTSetControllerState(BTPadConnected[i]->sock, LEDState[CurChan] | CurRumble);
 			else //classic controller doesnt have rumble, can be forced to wiimote if wanted
