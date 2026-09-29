@@ -14,14 +14,22 @@ This branch deliberately supports one connection path only:
 5. An A-wake connection is authenticated with the exported link key and then
    encrypted.
 6. Nintendont accepts incoming HID control PSM `0x11` and interrupt PSM `0x13`
-   in either order.  The controller is not exposed to the game until security
-   and both channels are ready.
-7. The first basic `0x3f` report is ignored.  Every following valid `0x3f`
-   report is translated to the existing `C_CCP`/`BTPadCont` contract.
+   in either order.  An idempotent ready transition exposes the controller as
+   soon as encryption and both channels are proven, even when lwBT omits its
+   normal aggregate connection callback.
+7. Nintendont sends the exact twelve-command `hid-nintendo` sequence captured
+   from the original controller: Device Info, the six SPI reads, IMU enable,
+   continuous report mode `0x30`, vibration enable, player LED, and home light.
+   Each command must receive its matching positive `0x21` response and is
+   retried at most three times.
+8. Device Info confirms identity. Native `0x30` input reports are then
+   translated to the existing `C_CCP`/`BTPadCont` contract. Basic `0x3f`
+   reports observed during initialization are deliberately not published.
 
-The minimal path does not perform inquiry, in-game pairing, outgoing HID,
-remote-name detection, player LED control, rumble, SPI calibration, or report
-mode `0x30` initialization.  Those features must not block basic input.
+The incoming path does not perform inquiry, in-game pairing, outgoing HID, or
+remote-name detection. The SPI responses are requested to mirror the measured
+Linux transaction exactly; fixed safe stick scaling remains in use until the
+calibration data is consumed by a later change.
 
 The listener pool reserves capacity for all ten existing vWii records plus the
 one imported Switch Pro record.  Partial listener allocation is retried without

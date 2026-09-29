@@ -13,7 +13,17 @@ typedef int32_t s32;
 #endif
 
 #define SWITCH_PRO_REPORT_BASIC 0x3f
+#define SWITCH_PRO_REPORT_COMMAND 0x21
+#define SWITCH_PRO_REPORT_FULL 0x30
 #define SWITCH_PRO_CANONICAL_CONTROLLER 0x00000001u
+
+#define SWITCH_PRO_INIT_COMMAND_COUNT 12
+#define SWITCH_PRO_INIT_RETRY_MAX 3
+
+#define SWITCH_PRO_EVENT_NONE 0
+#define SWITCH_PRO_EVENT_ACK 1
+#define SWITCH_PRO_EVENT_INPUT 2
+#define SWITCH_PRO_EVENT_NEGATIVE_ACK 3
 
 #define SWITCH_PRO_BTN_UP       0x0001
 #define SWITCH_PRO_BTN_LEFT     0x0002
@@ -48,9 +58,23 @@ struct SwitchProIncomingState {
 	u8 control_open;
 	u8 interrupt_open;
 	u8 connected;
+	u8 finalized;
+	u8 init_started;
+	u8 init_complete;
+	u8 init_failed;
+	u8 init_index;
+	u8 init_retries;
+	u8 awaiting_ack;
+	u8 pending_subcommand;
+	u8 report_counter;
+	u8 identity_confirmed;
 	u8 drop_first_basic_report;
 	u8 input_valid;
 	u16 basic_reports;
+	u16 command_reports;
+	u16 full_reports;
+	u16 init_sent;
+	u16 init_acks;
 	struct SwitchProIncomingInput input;
 };
 
@@ -66,6 +90,13 @@ void SwitchProIncomingEncryption(struct SwitchProIncomingState *state,
 void SwitchProIncomingChannels(struct SwitchProIncomingState *state,
 	u8 control_open, u8 interrupt_open);
 u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state);
+u8 SwitchProIncomingNeedsFinalize(const struct SwitchProIncomingState *state);
+void SwitchProIncomingFinalized(struct SwitchProIncomingState *state);
+void SwitchProIncomingStartInit(struct SwitchProIncomingState *state);
+u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
+	u8 *report, u16 capacity, u8 retry);
+s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
+	const u8 *report, u16 len);
 s32 SwitchProIncomingParseBasic(struct SwitchProIncomingState *state,
 	const u8 *report, u16 len);
 

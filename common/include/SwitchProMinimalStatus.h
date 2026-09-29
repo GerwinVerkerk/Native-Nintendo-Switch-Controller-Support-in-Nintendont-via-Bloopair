@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define SWITCH_PRO_STATUS_MAGIC    0x53504d53u
-#define SWITCH_PRO_STATUS_VERSION  1u
+#define SWITCH_PRO_STATUS_VERSION  2u
 #define SWITCH_PRO_STATUS_ARM_ADDR 0x132f3040u
 #define SWITCH_PRO_STATUS_PPC_ADDR 0x932f3040u
 #define SWITCH_PRO_STATUS_PATH     "switch-pro-minimal.bin"
@@ -23,6 +23,14 @@
 #define SWITCH_PRO_STATUS_BASIC_SEEN     (1u << 11)
 #define SWITCH_PRO_STATUS_BASIC_PARSED   (1u << 12)
 #define SWITCH_PRO_STATUS_PUBLISHED      (1u << 13)
+#define SWITCH_PRO_STATUS_INIT_STARTED   (1u << 14)
+#define SWITCH_PRO_STATUS_DEVICE_INFO    (1u << 15)
+#define SWITCH_PRO_STATUS_REPORT_MODE    (1u << 16)
+#define SWITCH_PRO_STATUS_INIT_COMPLETE  (1u << 17)
+#define SWITCH_PRO_STATUS_FULL_SEEN      (1u << 18)
+#define SWITCH_PRO_STATUS_FULL_PARSED    (1u << 19)
+#define SWITCH_PRO_STATUS_INIT_RETRIED   (1u << 20)
+#define SWITCH_PRO_STATUS_INIT_FAILED    (1u << 21)
 
 typedef struct __attribute__((packed)) {
 	uint32_t magic;
@@ -41,7 +49,13 @@ typedef struct __attribute__((packed)) {
 	uint32_t parsed_reports;
 	uint32_t publishes;
 	uint32_t channel;
-	uint32_t reserved[17];
+	uint32_t command_reports;
+	uint32_t init_sent;
+	uint32_t init_acks;
+	uint32_t init_retries;
+	uint32_t full_reports;
+	uint32_t init_index;
+	uint32_t reserved[11];
 } SwitchProMinimalStatus;
 
 typedef char SwitchProMinimalStatusSizeCheck[

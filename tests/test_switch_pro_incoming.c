@@ -100,6 +100,11 @@ static void test_transport_both_channel_orders(void)
 		}
 		assert(SwitchProIncomingReady(&state));
 		assert(state.connected);
+		assert(SwitchProIncomingNeedsFinalize(&state));
+		SwitchProIncomingFinalized(&state);
+		SwitchProIncomingFinalized(&state);
+		assert(state.finalized == 1);
+		assert(!SwitchProIncomingNeedsFinalize(&state));
 	}
 }
 
@@ -115,6 +120,20 @@ static void test_encrypted_reconnect_survives_redundant_auth_failure(void)
 	SwitchProIncomingChannels(&state, 1, 1);
 	assert(state.authenticated);
 	assert(SwitchProIncomingReady(&state));
+}
+
+static void test_security_after_channels_also_finalizes(void)
+{
+	struct SwitchProIncomingState state;
+	SwitchProIncomingReset(&state);
+	SwitchProIncomingImported(&state);
+	SwitchProIncomingListener(&state, 0);
+	SwitchProIncomingACL(&state, 0);
+	SwitchProIncomingChannels(&state, 1, 1);
+	assert(!SwitchProIncomingReady(&state));
+	SwitchProIncomingEncryption(&state, 0, 1);
+	assert(SwitchProIncomingReady(&state));
+	assert(SwitchProIncomingNeedsFinalize(&state));
 }
 
 static void test_encryption_failure_blocks_hid(void)
@@ -227,15 +246,196 @@ static void test_basic_button_bits(void)
 	}
 }
 
+static void make_ready(struct SwitchProIncomingState *state)
+{
+	SwitchProIncomingReset(state);
+	SwitchProIncomingImported(state);
+	SwitchProIncomingListener(state, 0);
+	SwitchProIncomingACL(state, 0);
+	SwitchProIncomingEncryption(state, 0, 1);
+	SwitchProIncomingChannels(state, 1, 1);
+	SwitchProIncomingFinalized(state);
+}
+
+static void test_exact_linux_init_sequence(void)
+{
+	static const u8 commands[SWITCH_PRO_INIT_COMMAND_COUNT] = {
+		0x02, 0x10, 0x10, 0x10, 0x10, 0x10,
+		0x10, 0x40, 0x03, 0x48, 0x30, 0x38
+	};
+	static const u8 lengths[SWITCH_PRO_INIT_COMMAND_COUNT] = {
+		0, 5, 5, 5, 5, 5, 5, 1, 1, 1, 1, 5
+	};
+	static const u8 data[SWITCH_PRO_INIT_COMMAND_COUNT][5] = {
+		{0, 0, 0, 0, 0},
+		{0x10, 0x80, 0x00, 0x00, 0x02},
+		{0x1b, 0x80, 0x00, 0x00, 0x02},
+		{0x12, 0x80, 0x00, 0x00, 0x09},
+		{0x1d, 0x80, 0x00, 0x00, 0x09},
+		{0x26, 0x80, 0x00, 0x00, 0x02},
+		{0x28, 0x80, 0x00, 0x00, 0x18},
+		{0x01, 0, 0, 0, 0},
+		{0x30, 0, 0, 0, 0},
+		{0x01, 0, 0, 0, 0},
+		{0x01, 0, 0, 0, 0},
+		{0x01, 0x00, 0x00, 0x11, 0x11}
+	};
+	struct SwitchProIncomingState state;
+	u8 report[64];
+	u8 reply[50];
+	u32 i;
+	u16 len;
+
+	make_ready(&state);
+	SwitchProIncomingStartInit(&state);
+	assert(state.init_started);
+	for(i = 0; i < SWITCH_PRO_INIT_COMMAND_COUNT; i++)
+	{
+		memset(report, 0xa5, sizeof(report));
+		len = SwitchProIncomingBuildInit(&state, report,
+			sizeof(report), 0);
+		assert(len == (u16)(11 + lengths[i]));
+		assert(report[0] == 0x01);
+		assert(report[1] == i);
+		assert(memcmp(&report[2], "\0\0\0\0\0\0\0\0", 8) == 0);
+		assert(report[10] == commands[i]);
+		assert(memcmp(&report[11], data[i], lengths[i]) == 0);
+		assert(!SwitchProIncomingBuildInit(&state, report,
+			sizeof(report), 0));
+
+		memset(reply, 0, sizeof(reply));
+		reply[0] = SWITCH_PRO_REPORT_COMMAND;
+		reply[13] = i == 0 ? 0x82 : 0x80;
+		reply[14] = commands[i];
+		if(commands[i] == 0x10)
+			memcpy(&reply[15], data[i], 5);
+		assert(SwitchProIncomingHandleReport(&state, reply,
+			sizeof(reply)) == SWITCH_PRO_EVENT_ACK);
+	}
+	assert(state.identity_confirmed);
+	assert(state.init_complete);
+	assert(state.init_sent == SWITCH_PRO_INIT_COMMAND_COUNT);
+	assert(state.init_acks == SWITCH_PRO_INIT_COMMAND_COUNT);
+	assert(!SwitchProIncomingBuildInit(&state, report, sizeof(report), 0));
+}
+
+static void test_init_retries_and_ack_validation(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[16];
+	u8 reply[15];
+	u32 i;
+
+	make_ready(&state);
+	SwitchProIncomingStartInit(&state);
+	assert(SwitchProIncomingBuildInit(&state, report, sizeof(report), 0) == 11);
+	memset(reply, 0, sizeof(reply));
+	reply[0] = SWITCH_PRO_REPORT_COMMAND;
+	reply[13] = 0x00;
+	reply[14] = 0x02;
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_NEGATIVE_ACK);
+	assert(state.init_index == 0 && state.awaiting_ack);
+	for(i = 0; i < SWITCH_PRO_INIT_RETRY_MAX; i++)
+		assert(SwitchProIncomingBuildInit(&state, report,
+			sizeof(report), 1) == 11);
+	assert(!SwitchProIncomingBuildInit(&state, report, sizeof(report), 1));
+	assert(state.init_failed);
+}
+
+static void test_delayed_spi_ack_does_not_advance_next_read(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[16];
+	u8 reply[50];
+	static const u8 first_spi[5] = {0x10, 0x80, 0x00, 0x00, 0x02};
+	static const u8 second_spi[5] = {0x1b, 0x80, 0x00, 0x00, 0x02};
+
+	make_ready(&state);
+	SwitchProIncomingStartInit(&state);
+	assert(SwitchProIncomingBuildInit(&state, report, sizeof(report), 0) == 11);
+	memset(reply, 0, sizeof(reply));
+	reply[0] = SWITCH_PRO_REPORT_COMMAND;
+	reply[13] = 0x82;
+	reply[14] = 0x02;
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_ACK);
+	assert(SwitchProIncomingBuildInit(&state, report, sizeof(report), 0) == 16);
+
+	memset(reply, 0, sizeof(reply));
+	reply[0] = SWITCH_PRO_REPORT_COMMAND;
+	reply[13] = 0x90;
+	reply[14] = 0x10;
+	memcpy(&reply[15], second_spi, sizeof(second_spi));
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_NONE);
+	assert(state.init_index == 1 && state.awaiting_ack);
+	memcpy(&reply[15], first_spi, sizeof(first_spi));
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_ACK);
+	assert(state.init_index == 2 && !state.awaiting_ack);
+}
+
+static void test_full_report_end_to_end(void)
+{
+	struct SwitchProIncomingState state;
+	u8 command[16];
+	u8 reply[50];
+	u8 report[49];
+
+	make_ready(&state);
+	SwitchProIncomingStartInit(&state);
+	assert(SwitchProIncomingBuildInit(&state, command,
+		sizeof(command), 0) == 11);
+	memset(reply, 0, sizeof(reply));
+	reply[0] = SWITCH_PRO_REPORT_COMMAND;
+	reply[13] = 0x82;
+	reply[14] = 0x02;
+	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
+		SWITCH_PRO_EVENT_ACK);
+	assert(state.identity_confirmed);
+
+	memset(report, 0, sizeof(report));
+	report[0] = SWITCH_PRO_REPORT_FULL;
+	report[3] = 0x08 | 0x40 | 0x80;
+	report[4] = 0x02;
+	report[5] = 0x02 | 0x08 | 0x40 | 0x80;
+	report[6] = 0x00;
+	report[7] = 0x08;
+	report[8] = 0x80;
+	report[9] = 0xff;
+	report[10] = 0x0f;
+	report[11] = 0x00;
+	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
+		SWITCH_PRO_EVENT_INPUT);
+	assert(state.full_reports == 1);
+	assert(state.input_valid);
+	assert(state.input.left_x == 0 && state.input.left_y == 0);
+	assert(state.input.right_x == 127 && state.input.right_y == 127);
+	assert(state.input.buttons & SWITCH_PRO_BTN_A);
+	assert(state.input.buttons & SWITCH_PRO_BTN_R);
+	assert(state.input.buttons & SWITCH_PRO_BTN_ZR);
+	assert(state.input.buttons & SWITCH_PRO_BTN_PLUS);
+	assert(state.input.buttons & SWITCH_PRO_BTN_UP);
+	assert(state.input.buttons & SWITCH_PRO_BTN_LEFT);
+	assert(state.input.buttons & SWITCH_PRO_BTN_L);
+	assert(state.input.buttons & SWITCH_PRO_BTN_ZL);
+}
+
 int main(void)
 {
 	test_pairing_record();
 	test_registration_is_independent_and_idempotent();
 	test_transport_both_channel_orders();
 	test_encrypted_reconnect_survives_redundant_auth_failure();
+	test_security_after_channels_also_finalizes();
 	test_encryption_failure_blocks_hid();
 	test_basic_report_end_to_end();
 	test_basic_dpad();
 	test_basic_button_bits();
+	test_exact_linux_init_sequence();
+	test_init_retries_and_ack_validation();
+	test_delayed_spi_ack_does_not_advance_next_read();
+	test_full_report_end_to_end();
 	return 0;
 }

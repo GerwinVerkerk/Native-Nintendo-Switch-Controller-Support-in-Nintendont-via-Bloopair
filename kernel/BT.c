@@ -47,6 +47,7 @@ static struct SwitchProIncomingState SwitchIncoming ALIGNED(32);
 static SwitchProPairing SwitchPairing ALIGNED(32);
 static struct bd_addr SwitchAddress;
 static u8 BTStackReady = 0;
+static u32 SwitchInitTimer = 0;
 static SwitchProMinimalStatus *SwitchStatus =
 	(SwitchProMinimalStatus*)SWITCH_PRO_STATUS_ARM_ADDR;
 
@@ -61,6 +62,7 @@ static vu32* SensorBarPosition = (u32*)0x132C0494;
 static const u8 LEDState[] = { 0x10, 0x20, 0x40, 0x80, 0xF0 };
 
 #define CHAN_NOT_SET 4
+#define SWITCH_PRO_INIT_RETRY_TICKS 189843
 
 #define TRANSFER_CONNECT 0
 #define TRANSFER_EXT1 1
@@ -119,6 +121,60 @@ static void SetSwitchStatusError(s32 error)
 	if(error != ERR_OK)
 		SwitchStatus->last_error = error;
 	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+}
+
+static s32 BTSendSwitchInit(u8 retry)
+{
+	u8 report[16];
+	u16 len = SwitchProIncomingBuildInit(&SwitchIncoming, report,
+		sizeof(report), retry);
+	s32 result;
+
+	if(len == 0)
+	{
+		if(SwitchIncoming.init_failed)
+			SetSwitchStatusFlag(SWITCH_PRO_STATUS_INIT_FAILED);
+		return ERR_VAL;
+	}
+	SwitchInitTimer = read32(HW_TIMER);
+	result = bte_senddata(SwitchPadStatus.sock, report, len);
+	if(result != ERR_OK)
+	{
+		SetSwitchStatusError(result);
+		return result;
+	}
+	SwitchStatus->init_sent = SwitchIncoming.init_sent;
+	SwitchStatus->init_retries = SwitchIncoming.init_retries;
+	SwitchStatus->init_index = SwitchIncoming.init_index;
+	if(retry)
+		SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_RETRIED;
+	if(SwitchIncoming.pending_subcommand == 0x03)
+		SwitchStatus->flags |= SWITCH_PRO_STATUS_REPORT_MODE;
+	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+	return ERR_OK;
+}
+
+static s32 BTTryFinalizeSwitchConnection(void)
+{
+	if(SwitchIncoming.finalized)
+		return ERR_OK;
+	if(!SwitchProIncomingNeedsFinalize(&SwitchIncoming))
+		return ERR_CONN;
+	if(BTChannelsUsed >= 4)
+		return ERR_USE;
+
+	SwitchProIncomingFinalized(&SwitchIncoming);
+	SwitchPadStatus.channel = CHAN_NOT_SET;
+	SwitchPadStatus.rumble = 0;
+	SwitchPadStatus.transferstate = TRANSFER_DONE;
+	SwitchPadStatus.controller = C_CCP;
+	BTPadConnected[BTChannelsUsed++] = &SwitchPadStatus;
+	sync_after_write(&SwitchPadStatus, sizeof(SwitchPadStatus));
+	SetSwitchStatusFlag(SWITCH_PRO_STATUS_CONNECTED);
+
+	SwitchProIncomingStartInit(&SwitchIncoming);
+	SetSwitchStatusFlag(SWITCH_PRO_STATUS_INIT_STARTED);
+	return BTSendSwitchInit(0);
 }
 
 static void PublishSwitchInput(void)
@@ -184,19 +240,30 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 
 	if(IsSwitchPad(stat))
 	{
-		s32 parsed = SwitchProIncomingParseBasic(&SwitchIncoming,
+		s32 event = SwitchProIncomingHandleReport(&SwitchIncoming,
 			(const u8*)buffer,len);
-		if(len > 0 && ((const u8*)buffer)[0] == SWITCH_PRO_REPORT_BASIC)
+		u8 report_id = len > 0 ? ((const u8*)buffer)[0] : 0;
+		SwitchStatus->command_reports = SwitchIncoming.command_reports;
+		SwitchStatus->full_reports = SwitchIncoming.full_reports;
+		SwitchStatus->init_sent = SwitchIncoming.init_sent;
+		SwitchStatus->init_acks = SwitchIncoming.init_acks;
+		SwitchStatus->init_retries = SwitchIncoming.init_retries;
+		SwitchStatus->init_index = SwitchIncoming.init_index;
+		if(report_id == SWITCH_PRO_REPORT_FULL)
+			SwitchStatus->flags |= SWITCH_PRO_STATUS_FULL_SEEN;
+		if(event == SWITCH_PRO_EVENT_ACK)
 		{
-			SwitchStatus->basic_reports = SwitchIncoming.basic_reports;
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_BASIC_SEEN;
+			if(((const u8*)buffer)[14] == 0x02)
+				SwitchStatus->flags |= SWITCH_PRO_STATUS_DEVICE_INFO;
+			if(SwitchIncoming.init_complete)
+				SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_COMPLETE;
+			else
+				BTSendSwitchInit(0);
 		}
-		if(parsed)
+		else if(event == SWITCH_PRO_EVENT_INPUT)
 		{
 			SwitchStatus->parsed_reports++;
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_BASIC_PARSED;
-			stat->controller = C_CCP;
-			sync_after_write(stat, sizeof(struct BTPadStat));
+			SwitchStatus->flags |= SWITCH_PRO_STATUS_FULL_PARSED;
 			PublishSwitchInput();
 		}
 		sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
@@ -702,9 +769,17 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 
 static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 {
-	(void)err;
 	sync_before_read(arg, sizeof(struct BTPadStat));
 	struct BTPadStat *stat = (struct BTPadStat*)arg;
+
+	if(IsSwitchPad(stat))
+	{
+		if(err != ERR_OK)
+			return err;
+		SwitchProIncomingChannels(&SwitchIncoming,
+			pcb->ctl_pcb != NULL,pcb->data_pcb != NULL);
+		return BTTryFinalizeSwitchConnection();
+	}
 
 	if(BTChannelsUsed >= 4)
 	{
@@ -716,21 +791,6 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 
 	stat->channel = CHAN_NOT_SET;
 	stat->rumble = 0;
-
-	if(IsSwitchPad(stat))
-	{
-		SwitchProIncomingChannels(&SwitchIncoming,
-			pcb->ctl_pcb != NULL,pcb->data_pcb != NULL);
-		if(!SwitchProIncomingReady(&SwitchIncoming))
-			return ERR_CONN;
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_CONNECTED);
-		stat->transferstate = TRANSFER_DONE;
-		stat->controller = C_CCP;
-		BTPadConnected[BTChannelsUsed] = stat;
-		sync_after_write(stat, sizeof(struct BTPadStat));
-		BTChannelsUsed++;
-		return ERR_OK;
-	}
 
 	BTSetControllerState(stat->sock, LEDState[CHAN_NOT_SET]);
 
@@ -794,6 +854,7 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 		SwitchProIncomingReset(&SwitchIncoming);
 		SwitchProIncomingImported(&SwitchIncoming);
 		SwitchProIncomingListener(&SwitchIncoming,ERR_OK);
+		SwitchInitTimer = 0;
 		SwitchPadStatus.controller = C_NOT_SET;
 		SwitchPadStatus.channel = CHAN_NOT_SET;
 		sync_after_write(&SwitchPadStatus, sizeof(SwitchPadStatus));
@@ -929,6 +990,8 @@ void BTSwitchIncomingAuthentication(struct bd_addr *bdaddr,u8 result)
 			bte_security_complete(SwitchPadStatus.sock,ERR_CONN);
 		return;
 	}
+	if(SwitchIncoming.encrypted)
+		return;
 	command_result = hci_set_connection_encrypt(bdaddr,1);
 	if(command_result == ERR_OK)
 		SetSwitchStatusFlag(SWITCH_PRO_STATUS_ENCRYPT_REQUESTED);
@@ -954,6 +1017,8 @@ void BTSwitchIncomingEncryption(struct bd_addr *bdaddr,u8 result,u8 enabled)
 		SetSwitchStatusError(ERR_CONN);
 	bte_security_complete(SwitchPadStatus.sock,
 		(result == HCI_SUCCESS && enabled) ? ERR_OK : ERR_CONN);
+	if(result == HCI_SUCCESS && enabled)
+		BTTryFinalizeSwitchConnection();
 }
 
 void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel)
@@ -970,7 +1035,11 @@ void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel)
 		SwitchStatus->interrupt_count++;
 		SwitchStatus->flags |= SWITCH_PRO_STATUS_INTERRUPT_OPEN;
 	}
+	SwitchProIncomingChannels(&SwitchIncoming,
+		SwitchIncoming.control_open || control_channel,
+		SwitchIncoming.interrupt_open || !control_channel);
 	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
+	BTTryFinalizeSwitchConnection();
 }
 
 void BTSwitchIncomingCommandStatus(u8 command,u8 result)
@@ -979,6 +1048,8 @@ void BTSwitchIncomingCommandStatus(u8 command,u8 result)
 		return;
 	if(command != HCI_AUTHENTICATION_REQUESTED &&
 		command != HCI_SET_CONN_ENCRYPT)
+		return;
+	if(SwitchIncoming.encrypted)
 		return;
 	SetSwitchStatusError(ERR_CONN);
 	bte_security_complete(SwitchPadStatus.sock,ERR_CONN);
@@ -1017,6 +1088,11 @@ void BTUpdateRegisters(void)
 		return;
 	if(BTStackReady && SwitchProIncomingNeedsListener(&SwitchIncoming))
 		EnsureSwitchPad();
+	if(SwitchIncoming.finalized && SwitchIncoming.awaiting_ack &&
+		!SwitchIncoming.init_complete && !SwitchIncoming.init_failed &&
+		SwitchInitTimer != 0 &&
+		TimerDiffTicks(SwitchInitTimer) >= SWITCH_PRO_INIT_RETRY_TICKS)
+		BTSendSwitchInit(1);
 
 	if(intr == 1)
 	{
