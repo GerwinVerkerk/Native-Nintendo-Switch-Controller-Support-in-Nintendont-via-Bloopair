@@ -6,7 +6,8 @@
 
 #define SWITCH_PRO_PAIRING_MAGIC   0x4e535042u
 #define SWITCH_PRO_PAIRING_VERSION 1u
-#define SWITCH_PRO_PAIRING_ADDR    0x132f3000u
+#define SWITCH_PRO_PAIRING_ARM_ADDR 0x132f3000u
+#define SWITCH_PRO_PAIRING_PPC_ADDR 0x932f3000u
 #define SWITCH_PRO_PAIRING_PATH    "wiiu/bloopair/nintendont-switch-pro.bin"
 #define SWITCH_PRO_PAIRING_TYPE    0x24u
 
@@ -62,5 +63,7 @@ static inline int SwitchProPairingIsValid(const SwitchProPairing *pairing)
 }
 
 typedef char SwitchProPairingSizeCheck[(sizeof(SwitchProPairing) == 48) ? 1 : -1];
+typedef char SwitchProPairingAddressAliasCheck[
+	((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) == SWITCH_PRO_PAIRING_ARM_ADDR) ? 1 : -1];
 
 #endif

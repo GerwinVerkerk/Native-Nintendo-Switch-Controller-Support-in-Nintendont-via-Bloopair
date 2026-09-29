@@ -46,7 +46,7 @@ static struct BTPadStat *BTPadConnected[4];
 static struct BTPadStat BTPadStatus[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static struct linkkey_info BTKeys[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static u32 BTKeyCount = 0;
-static SwitchProPairing *SwitchPairing = (SwitchProPairing*)SWITCH_PRO_PAIRING_ADDR;
+static SwitchProPairing *SwitchPairing = (SwitchProPairing*)SWITCH_PRO_PAIRING_ARM_ADDR;
 static volatile u32 BTDiagnosticStage = 0;
 static struct bd_addr BTDiagnosticTarget;
 static u8 BTDiagnosticTargetSet = 0;

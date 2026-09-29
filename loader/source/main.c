@@ -261,7 +261,7 @@ static void LoadSwitchProPairingFromSd(void)
 {
 	FIL file;
 	SwitchProPairing pairing;
-	SwitchProPairing *shared = (SwitchProPairing*)SWITCH_PRO_PAIRING_ADDR;
+	SwitchProPairing *shared = (SwitchProPairing*)SWITCH_PRO_PAIRING_PPC_ADDR;
 	UINT read = 0;
 
 	memset(shared, 0, sizeof(*shared));
