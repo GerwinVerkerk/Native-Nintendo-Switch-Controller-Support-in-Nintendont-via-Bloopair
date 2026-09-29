@@ -26,6 +26,32 @@ typedef struct __attribute__((packed)) {
 	uint32_t checksum;
 } SwitchProPairing;
 
+/* Bloopair exports Bluetooth addresses in the conventional display order
+ * (most-significant octet first).  lwBT stores the six octets exactly as they
+ * appear in HCI packets, which is the reverse order.  Keep the on-disk format
+ * host-independent and convert only at the lwBT boundary. */
+static inline void SwitchProPairingAddressToLwbt(const uint8_t source[6],
+	uint8_t destination[6])
+{
+	size_t i;
+	for(i = 0; i < 6; i++)
+		destination[i] = source[5 - i];
+}
+
+static inline int SwitchProPairingConsoleMatchesLwbt(
+	const SwitchProPairing *pairing, const uint8_t local_lwbt[6])
+{
+	uint8_t expected[6];
+	size_t i;
+	if(pairing == NULL || local_lwbt == NULL)
+		return 0;
+	SwitchProPairingAddressToLwbt(pairing->console_bda, expected);
+	for(i = 0; i < sizeof(expected); i++)
+		if(expected[i] != local_lwbt[i])
+			return 0;
+	return 1;
+}
+
 static inline uint32_t SwitchProPairingChecksum(const SwitchProPairing *pairing)
 {
 	const uint8_t *bytes = (const uint8_t*)pairing;
@@ -60,6 +86,13 @@ static inline int SwitchProPairingIsValid(const SwitchProPairing *pairing)
 		key_or |= pairing->link_key[i];
 	return controller_or != 0 && console_or != 0 && key_or != 0 &&
 		pairing->checksum == SwitchProPairingChecksum(pairing);
+}
+
+static inline int SwitchProPairingCanImport(const SwitchProPairing *pairing,
+	const uint8_t local_lwbt[6])
+{
+	return SwitchProPairingIsValid(pairing) &&
+		SwitchProPairingConsoleMatchesLwbt(pairing, local_lwbt);
 }
 
 typedef char SwitchProPairingSizeCheck[(sizeof(SwitchProPairing) == 48) ? 1 : -1];

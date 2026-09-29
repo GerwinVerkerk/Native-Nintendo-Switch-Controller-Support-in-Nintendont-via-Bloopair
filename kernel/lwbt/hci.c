@@ -105,6 +105,20 @@ struct hci_link* hci_get_link(struct bd_addr *bdaddr)
 	return link;
 }
 
+err_t hci_get_local_bd_addr(struct bd_addr *bdaddr)
+{
+	u8_t value = 0;
+	u32_t i;
+	if(hci_dev == NULL || bdaddr == NULL)
+		return ERR_VAL;
+	for(i = 0; i < sizeof(hci_dev->bdaddr.addr); i++)
+		value |= hci_dev->bdaddr.addr[i];
+	if(value == 0)
+		return ERR_CONN;
+	bd_addr_set(bdaddr, &hci_dev->bdaddr);
+	return ERR_OK;
+}
+
 /*-----------------------------------------------------------------------------------*/
 /* 
  * hci_close():

@@ -74,13 +74,19 @@ through the HCI `Read Stored Link Key` command.
 Bloopair patches Wii U IOS-PAD. During pairing it calls
 `registerNewDevice(...)` and `BTM_WriteStoredLinkKey(...)`. It does not copy a
 controller entry into vWii SYSCONF. This branch bridges that missing device-list
-step by listening on extra stored-key addresses.
+and key handoff through a local versioned record exported by Koopair. The
+loader validates the record and puts it in reserved shared memory. The kernel
+validates it again, verifies that its console address matches the local
+Bluetooth adapter, converts the conventional display-order controller address
+to lwBT's raw HCI octet order, inserts the key in the software key cache and
+creates one persistent incoming Switch listener even when the controller is
+absent from vWii SYSCONF. Inquiry is disabled while this imported pairing is
+active so it cannot starve an incoming A-wake page.
 
-Whether a Bloopair-created key remains visible to Nintendont after the Wii U to
-vWii transition can only be established on real hardware. A successful build
-does not prove this handoff. If no extra key appears, a separate pairing/import
-helper will be needed; the parser, protocol initialization and mapping remain
-usable.
+The record contains Bluetooth key material and must remain local to the Wii U
+and SD card. Diagnostics expose only validation/result flags, never addresses
+or key bytes. A successful build does not prove the hardware handoff; that
+still requires an incoming reconnect and input test on the console.
 
 Protocol reference: Bloopair commit
 `a8b8aad07cf4df51c34e31e1694b3e2a64517de4`, especially

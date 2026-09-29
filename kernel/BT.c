@@ -47,6 +47,8 @@ static struct BTPadStat BTPadStatus[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static struct linkkey_info BTKeys[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 static u32 BTKeyCount = 0;
 static SwitchProPairing *SwitchPairing = (SwitchProPairing*)SWITCH_PRO_PAIRING_ARM_ADDR;
+static struct bd_addr SwitchPairingBdaddr;
+static u8 SwitchPairingImported = 0;
 static volatile u32 BTDiagnosticStage = 0;
 static struct bd_addr BTDiagnosticTarget;
 static u8 BTDiagnosticTargetSet = 0;
@@ -361,6 +363,7 @@ static void BTRegisterPersistentPads(void)
 {
 	struct bd_addr bdaddr;
 	u32 i, count;
+	u8 pairing_registered = 0;
 	if(BTPadRegistrationInitialized)
 		return;
 	count = BTDevices->num_registered;
@@ -375,7 +378,23 @@ static void BTRegisterPersistentPads(void)
 			BTDevices->registered[i].bdaddr[2],
 			BTDevices->registered[i].bdaddr[1],
 			BTDevices->registered[i].bdaddr[0]);
-		if(strstr(BTDevices->registered[i].name, "Pro Controller") != NULL &&
+		if(SwitchPairingImported &&
+			memcmp(bdaddr.addr, SwitchPairingBdaddr.addr,
+				sizeof(bdaddr.addr)) == 0)
+		{
+			BTPadStatus[i].transfertype = TRANSFER_SWITCH_PRO;
+			SwitchProTransportBegin(&BTPadStatus[i].switch_transport,
+				SWITCH_PRO_CONNECTION_INCOMING);
+			memcpy(BTPadStatus[i].switch_link_key, SwitchPairing->link_key,
+				sizeof(BTPadStatus[i].switch_link_key));
+			BTPadStatus[i].switch_link_key_valid = 1;
+			BTPadStatus[i].switch_force_new_pairing = 0;
+			pairing_registered = 1;
+			BTDiagnosticSetTarget(&bdaddr);
+			BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 2, i, 1,
+				0, 0, 0, 0, 0, 0);
+		}
+		else if(strstr(BTDevices->registered[i].name, "Pro Controller") != NULL &&
 			strstr(BTDevices->registered[i].name, "-UC") == NULL)
 		{
 			BTPadStatus[i].transfertype = TRANSFER_SWITCH_PRO;
@@ -390,6 +409,24 @@ static void BTRegisterPersistentPads(void)
 		BTPadStatus[i].channel = CHAN_NOT_SET;
 		RegisterBTPad(&BTPadStatus[i], &bdaddr);
 		BTPadRegisteredCount = i + 1;
+	}
+	if(SwitchPairingImported && !pairing_registered &&
+		BTPadRegisteredCount < CONF_PAD_MAX_REGISTERED)
+	{
+		i = BTPadRegisteredCount++;
+		memset(&BTPadStatus[i], 0, sizeof(BTPadStatus[i]));
+		BTPadStatus[i].transfertype = TRANSFER_SWITCH_PRO;
+		BTPadStatus[i].channel = CHAN_NOT_SET;
+		BTPadStatus[i].switch_led_channel = CHAN_NOT_SET;
+		SwitchProTransportBegin(&BTPadStatus[i].switch_transport,
+			SWITCH_PRO_CONNECTION_INCOMING);
+		memcpy(BTPadStatus[i].switch_link_key, SwitchPairing->link_key,
+			sizeof(BTPadStatus[i].switch_link_key));
+		BTPadStatus[i].switch_link_key_valid = 1;
+		BTDiagnosticSetTarget(&SwitchPairingBdaddr);
+		RegisterBTPad(&BTPadStatus[i], &SwitchPairingBdaddr);
+		BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, 3, i, 1,
+			0, 0, 0, 0, 0, 0);
 	}
 }
 
@@ -1746,28 +1783,51 @@ static s32 BTPatchCB(s32 result,void *usrdata)
 static s32 BTReadLinkKeyCB(s32 result,void *usrdata)
 {
 	u32 i;
+	struct bd_addr local_bdaddr;
+	u8 record_valid;
+	u8 local_available = 0;
+	u8 console_matches = 0;
 	BTKeyCount = result > 0 ? (u32)result : 0;
 	if(BTKeyCount > CONF_PAD_MAX_REGISTERED)
 		BTKeyCount = CONF_PAD_MAX_REGISTERED;
+	SwitchPairingImported = 0;
+	memset(&SwitchPairingBdaddr, 0, sizeof(SwitchPairingBdaddr));
 	sync_before_read(SwitchPairing, sizeof(*SwitchPairing));
-	if(SwitchProPairingIsValid(SwitchPairing))
+	record_valid = SwitchProPairingIsValid(SwitchPairing);
+	if(record_valid)
+	{
+		SwitchProPairingAddressToLwbt(SwitchPairing->controller_bda,
+			SwitchPairingBdaddr.addr);
+		if(hci_get_local_bd_addr(&local_bdaddr) == ERR_OK)
+		{
+			local_available = 1;
+			console_matches = SwitchProPairingConsoleMatchesLwbt(
+				SwitchPairing, local_bdaddr.addr);
+		}
+	}
+	if(local_available && SwitchProPairingCanImport(SwitchPairing,
+		local_bdaddr.addr))
 	{
 		for(i = 0; i < BTKeyCount; i++)
 		{
-			if(memcmp(BTKeys[i].bdaddr.addr, SwitchPairing->controller_bda,
+			if(memcmp(BTKeys[i].bdaddr.addr, SwitchPairingBdaddr.addr,
 				sizeof(BTKeys[i].bdaddr.addr)) == 0)
 				break;
 		}
 		if(i < CONF_PAD_MAX_REGISTERED)
 		{
-			memcpy(BTKeys[i].bdaddr.addr, SwitchPairing->controller_bda,
+			memcpy(BTKeys[i].bdaddr.addr, SwitchPairingBdaddr.addr,
 				sizeof(BTKeys[i].bdaddr.addr));
 			memcpy(BTKeys[i].key, SwitchPairing->link_key,
 				sizeof(BTKeys[i].key));
 			if(i == BTKeyCount)
 				BTKeyCount++;
+			SwitchPairingImported = 1;
 		}
 	}
+	BTSwitchTraceArm(SWITCH_TRACE_ARM_PAIRING, record_valid,
+		local_available, console_matches, SwitchPairingImported,
+		BTKeyCount, 0, 0, 0, 0);
 	BTE_ApplyPatch(BTPatchCB);
 	return ERR_OK;
 }
@@ -1787,6 +1847,8 @@ void BTInit(void)
 	SwitchInquiryActive = 0;
 	SwitchInquiryAttempts = 0;
 	SwitchInquiryTargetFound = 0;
+	SwitchPairingImported = 0;
+	memset(&SwitchPairingBdaddr, 0, sizeof(SwitchPairingBdaddr));
 	BTPadRegistrationInitialized = 0;
 	BTPadRegisteredCount = 0;
 	BTDiagnosticStage = 0;
@@ -2098,7 +2160,7 @@ void BTUpdateRegisters(void)
 	 * controller.  Prefer the stored-key A-wake route for the initial window;
 	 * between discovery rounds return to page scan long enough for an incoming
 	 * controller to page the host. */
-	if(!SwitchInquiryTargetFound && !SwitchInquiryActive &&
+	if(!SwitchPairingImported && !SwitchInquiryTargetFound && !SwitchInquiryActive &&
 		SwitchInquiryAttempts < SWITCH_INQUIRY_MAX_ATTEMPTS &&
 		TimerDiffSeconds(SwitchInquiryRetryTimer) >=
 			(SwitchInquiryAttempts == 0 ?

@@ -375,6 +375,7 @@ void hci_acldata_handler(struct pbuf *p);
 
 err_t hci_reset();
 err_t hci_read_bd_addr(void);
+err_t hci_get_local_bd_addr(struct bd_addr *bdaddr);
 err_t hci_set_hc_to_h_fc(void);
 err_t hci_read_buffer_size(void);
 err_t hci_host_buffer_size(void);

@@ -8,6 +8,9 @@
 static void test_pairing_record(void)
 {
 	SwitchProPairing pairing;
+	u8 lwbt_address[6];
+	const u8 controller_bda[6] = { 1, 2, 3, 4, 5, 6 };
+	const u8 expected_lwbt[6] = { 6, 5, 4, 3, 2, 1 };
 	u32 i;
 	assert(SWITCH_PRO_PAIRING_ARM_ADDR == 0x132f3000u);
 	assert(SWITCH_PRO_PAIRING_PPC_ADDR == 0x932f3000u);
@@ -20,8 +23,10 @@ static void test_pairing_record(void)
 	pairing.controller_type = SWITCH_PRO_PAIRING_TYPE;
 	pairing.vendor_id = 0x057e;
 	pairing.product_id = 0x2009;
-	pairing.controller_bda[0] = 1;
-	pairing.console_bda[0] = 1;
+	memcpy(pairing.controller_bda, controller_bda,
+		sizeof(pairing.controller_bda));
+	memcpy(pairing.console_bda, controller_bda,
+		sizeof(pairing.console_bda));
 	for(i = 0; i < sizeof(pairing.link_key); i++)
 		pairing.link_key[i] = (u8)(i + 1);
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
@@ -32,6 +37,17 @@ static void test_pairing_record(void)
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
 	pairing.product_id = 0x2008;
 	assert(!SwitchProPairingIsValid(&pairing));
+
+	SwitchProPairingAddressToLwbt(controller_bda, lwbt_address);
+	assert(memcmp(lwbt_address, expected_lwbt, sizeof(lwbt_address)) == 0);
+	assert(SwitchProPairingConsoleMatchesLwbt(&pairing, expected_lwbt));
+	assert(!SwitchProPairingCanImport(&pairing, expected_lwbt));
+	pairing.product_id = 0x2009;
+	pairing.checksum = SwitchProPairingChecksum(&pairing);
+	assert(SwitchProPairingCanImport(&pairing, expected_lwbt));
+	lwbt_address[2] ^= 0x80;
+	assert(!SwitchProPairingConsoleMatchesLwbt(&pairing, lwbt_address));
+	assert(!SwitchProPairingCanImport(&pairing, lwbt_address));
 }
 
 static void pack_axis(u8 *data, u16 x, u16 y)
