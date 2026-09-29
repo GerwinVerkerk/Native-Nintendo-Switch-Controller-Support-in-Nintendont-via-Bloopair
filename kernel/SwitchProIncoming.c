@@ -84,7 +84,7 @@ static void parse_full(struct SwitchProIncomingState *state,
 	state->input.left_x = clamp_axis(
 		((s32)switch_axis_x(&report[6]) - 0x800) >> 4);
 	state->input.left_y = clamp_axis(
-		-(((s32)state->raw_left_y - 0x800) >> 4));
+		((s32)state->raw_left_y - 0x800) >> 4);
 	state->input.right_x = clamp_axis(
 		((s32)switch_axis_x(&report[9]) - 0x800) >> 4);
 	state->input.right_y = clamp_axis(

@@ -248,6 +248,30 @@ static void test_basic_dpad(void)
 	}
 }
 
+static void test_full_left_y_gamecube_direction(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[49];
+
+	memset(report, 0, sizeof(report));
+	report[0] = SWITCH_PRO_REPORT_FULL;
+	report[7] = 0xf8;
+	report[8] = 0xff;
+	SwitchProIncomingReset(&state);
+	state.identity_confirmed = 1;
+	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
+		SWITCH_PRO_EVENT_INPUT);
+	assert(state.raw_left_y == 0x0fff);
+	assert(state.input.left_y == 127);
+
+	report[7] = 0x08;
+	report[8] = 0x00;
+	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
+		SWITCH_PRO_EVENT_INPUT);
+	assert(state.raw_left_y == 0x0000);
+	assert(state.input.left_y == -128);
+}
+
 static void test_basic_button_bits(void)
 {
 	struct ButtonCase {
@@ -604,6 +628,7 @@ int main(void)
 	test_encryption_failure_blocks_hid();
 	test_basic_report_end_to_end();
 	test_basic_dpad();
+	test_full_left_y_gamecube_direction();
 	test_basic_button_bits();
 	test_exact_linux_init_sequence();
 	test_player_led_channel_mapping_and_updates();
