@@ -20,8 +20,9 @@ static void make_pairing(SwitchProPairing *pairing)
 		pairing->controller_bda[i] = i + 1;
 		pairing->console_bda[i] = i + 11;
 	}
+	pairing->key_type = SWITCH_PRO_PAIRING_KEY_TYPE_UNKNOWN;
 	for(i = 0; i < 16; i++)
-		pairing->link_key[i] = i + 21;
+		pairing->hci_link_key[i] = i + 21;
 	pairing->checksum = SwitchProPairingChecksum(pairing);
 }
 
@@ -29,6 +30,7 @@ static void test_pairing_record(void)
 {
 	SwitchProPairing pairing;
 	u8 lwbt[6];
+	u8 hci_key[16];
 	const u8 expected[6] = {6, 5, 4, 3, 2, 1};
 	make_pairing(&pairing);
 	assert(sizeof(pairing) == 48);
@@ -41,9 +43,15 @@ static void test_pairing_record(void)
 	assert(SwitchProPairingIsValid(&pairing));
 	SwitchProPairingAddressToLwbt(pairing.controller_bda, lwbt);
 	assert(memcmp(lwbt, expected, sizeof(lwbt)) == 0);
-	pairing.link_key[3] ^= 0x80;
+	SwitchProPairingCopyHciLinkKey(&pairing, hci_key);
+	assert(memcmp(hci_key, pairing.hci_link_key, sizeof(hci_key)) == 0);
+	pairing.hci_link_key[3] ^= 0x80;
 	assert(!SwitchProPairingIsValid(&pairing));
-	pairing.link_key[3] ^= 0x80;
+	pairing.hci_link_key[3] ^= 0x80;
+	pairing.checksum = SwitchProPairingChecksum(&pairing);
+	pairing.version = 1;
+	assert(!SwitchProPairingIsValid(&pairing));
+	pairing.version = SWITCH_PRO_PAIRING_VERSION;
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
 	pairing.product_id = 0x2008;
 	assert(!SwitchProPairingIsValid(&pairing));

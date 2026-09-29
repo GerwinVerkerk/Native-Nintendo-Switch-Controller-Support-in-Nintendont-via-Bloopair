@@ -12,4 +12,4 @@ test_switch_pro_incoming: test_switch_pro_incoming.c \
 		test_switch_pro_incoming.c ../kernel/SwitchProIncoming.c -o $@
 
 clean:
-	$(RM) test_switch_pro_incoming
+	$(RM) test_switch_pro_incoming test_switch_pro_incoming_san

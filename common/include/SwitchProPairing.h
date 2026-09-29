@@ -5,11 +5,12 @@
 #include <stdint.h>
 
 #define SWITCH_PRO_PAIRING_MAGIC    0x4e535042u
-#define SWITCH_PRO_PAIRING_VERSION  1u
+#define SWITCH_PRO_PAIRING_VERSION  2u
 #define SWITCH_PRO_PAIRING_ARM_ADDR 0x132f3000u
 #define SWITCH_PRO_PAIRING_PPC_ADDR 0x932f3000u
 #define SWITCH_PRO_PAIRING_PATH     "wiiu/bloopair/nintendont-switch-pro.bin"
 #define SWITCH_PRO_PAIRING_TYPE     0x24u
+#define SWITCH_PRO_PAIRING_KEY_TYPE_UNKNOWN 0xffu
 
 typedef struct __attribute__((packed)) {
 	uint32_t magic;
@@ -17,7 +18,8 @@ typedef struct __attribute__((packed)) {
 	uint16_t size;
 	uint8_t controller_bda[6];
 	uint8_t console_bda[6];
-	uint8_t link_key[16];
+	/* Exact byte order used by the HCI Link Key Request Reply payload. */
+	uint8_t hci_link_key[16];
 	uint8_t key_type;
 	uint8_t controller_type;
 	uint16_t vendor_id;
@@ -32,6 +34,14 @@ static inline void SwitchProPairingAddressToLwbt(const uint8_t source[6],
 	size_t i;
 	for(i = 0; i < 6; i++)
 		destination[i] = source[5 - i];
+}
+
+static inline void SwitchProPairingCopyHciLinkKey(
+	const SwitchProPairing *pairing, uint8_t destination[16])
+{
+	size_t i;
+	for(i = 0; i < 16; i++)
+		destination[i] = pairing->hci_link_key[i];
 }
 
 static inline uint32_t SwitchProPairingChecksum(const SwitchProPairing *pairing)
@@ -66,8 +76,8 @@ static inline int SwitchProPairingIsValid(const SwitchProPairing *pairing)
 		controller_or |= pairing->controller_bda[i];
 		console_or |= pairing->console_bda[i];
 	}
-	for(i = 0; i < sizeof(pairing->link_key); i++)
-		key_or |= pairing->link_key[i];
+	for(i = 0; i < sizeof(pairing->hci_link_key); i++)
+		key_or |= pairing->hci_link_key[i];
 
 	return controller_or != 0 && console_or != 0 && key_or != 0 &&
 		pairing->checksum == SwitchProPairingChecksum(pairing);

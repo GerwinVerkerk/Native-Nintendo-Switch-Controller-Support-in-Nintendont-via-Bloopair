@@ -894,7 +894,7 @@ u8 BTSwitchIncomingGetKey(struct bd_addr *bdaddr,u8 *key)
 		return 0;
 	SwitchStatus->key_requests++;
 	SetSwitchStatusFlag(SWITCH_PRO_STATUS_KEY_REPLIED);
-	memcpy(key,SwitchPairing.link_key,16);
+	SwitchProPairingCopyHciLinkKey(&SwitchPairing,key);
 	return 1;
 }
 

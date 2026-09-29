@@ -5,6 +5,8 @@ This branch deliberately supports one connection path only:
 1. Bloopair pairs an original Nintendo Switch Pro Controller.
 2. Koopair exports the 48-byte pairing record to
    `sd:/wiiu/bloopair/nintendont-switch-pro.bin`.
+   Pairing record version 2 stores the link key in the exact byte order used
+   by an HCI Link Key Request Reply. Version 1 records are rejected.
 3. The Nintendont loader validates the record and copies it to reserved shared
    memory.
 4. The ARM kernel registers one dedicated, idempotent incoming HID listener for
