@@ -422,6 +422,41 @@ static void test_player_led_channel_mapping_and_updates(void)
 		sizeof(report), 0));
 }
 
+static void test_init_led_waits_for_channel_then_resumes(void)
+{
+	struct SwitchProIncomingState state;
+	u8 report[64];
+	u8 reply[64];
+	u32 i;
+
+	make_ready(&state);
+	SwitchProIncomingStartInit(&state);
+	for(i = 0; i < 10; i++)
+	{
+		u16 len = SwitchProIncomingBuildInit(&state, report,
+			sizeof(report), 0);
+		assert(len != 0);
+		memset(reply, 0, sizeof(reply));
+		reply[0] = SWITCH_PRO_REPORT_COMMAND;
+		reply[13] = 0x80;
+		reply[14] = report[10];
+		if(report[10] == 0x10)
+			memcpy(&reply[15], &report[11], 5);
+		assert(SwitchProIncomingHandleReport(&state, reply,
+			sizeof(reply)) == SWITCH_PRO_EVENT_ACK);
+	}
+	assert(state.init_index == 10);
+	assert(!state.awaiting_ack);
+	assert(!SwitchProIncomingBuildInit(&state, report,
+		sizeof(report), 0));
+	assert(!state.init_failed);
+	SwitchProIncomingSetChannel(&state, 0);
+	assert(SwitchProIncomingBuildInit(&state, report,
+		sizeof(report), 0) == 12);
+	assert(report[10] == 0x30);
+	assert(report[11] == 0x01);
+}
+
 static void test_player_led_retry_is_bounded_and_reconnect_resets(void)
 {
 	struct SwitchProIncomingState state;
@@ -571,6 +606,7 @@ int main(void)
 	test_basic_button_bits();
 	test_exact_linux_init_sequence();
 	test_player_led_channel_mapping_and_updates();
+	test_init_led_waits_for_channel_then_resumes();
 	test_player_led_retry_is_bounded_and_reconnect_resets();
 	test_init_retries_and_ack_validation();
 	test_delayed_spi_ack_does_not_advance_next_read();

@@ -1268,6 +1268,13 @@ void BTUpdateRegisters(void)
 		if(BTStackReady && SwitchProIncomingNeedsListener(&slot->incoming))
 			EnsureSwitchPad(slot);
 		BTPumpSwitchConnection(slot);
+		/* Channel assignment may arrive after the first ten init ACKs.  The
+		 * channel-dependent player-LED command deliberately waits for that
+		 * assignment, so resume the sequence once no command is outstanding. */
+		if(slot->incoming.finalized && slot->incoming.init_started &&
+			!slot->incoming.init_complete && !slot->incoming.init_failed &&
+			!slot->incoming.awaiting_ack)
+			BTSendSwitchInit(slot,0);
 		if(SwitchProIncomingNeedsLedUpdate(&slot->incoming))
 			BTSendSwitchLed(slot,0);
 		if(slot->incoming.finalized && slot->incoming.awaiting_ack &&
