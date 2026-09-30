@@ -33,6 +33,8 @@ static void make_pairing(SwitchProPairing *pairing)
 static void test_pairing_record(void)
 {
 	SwitchProPairing pairing;
+	SwitchProPairing mixed;
+	SwitchProPairing filtered;
 	SwitchProPairing upgraded;
 	SwitchProPairingLegacyV2 legacy;
 	u8 lwbt[6];
@@ -58,6 +60,39 @@ static void test_pairing_record(void)
 	pairing.checksum = SwitchProPairingChecksum(&pairing);
 	pairing.controllers[0].product_id = 0x2008;
 	assert(!SwitchProPairingIsValid(&pairing));
+
+	make_pairing(&mixed);
+	mixed.count = 3;
+	mixed.controllers[2] = mixed.controllers[0];
+	mixed.controllers[2].controller_bda[0] = 0x55;
+	mixed.controllers[2].vendor_id = 0;
+	mixed.controllers[2].product_id = 0;
+	mixed.checksum = SwitchProPairingChecksum(&mixed);
+	assert(!SwitchProPairingIsValid(&mixed));
+	assert(SwitchProPairingFilterSupported(&mixed, &filtered));
+	assert(filtered.count == 2);
+	assert(SwitchProPairingIsValid(&filtered));
+
+	/* Unsupported entry order must not affect the supported result. */
+	mixed.controllers[2] = mixed.controllers[1];
+	mixed.controllers[1] = mixed.controllers[0];
+	mixed.controllers[0].controller_bda[0] = 0x55;
+	mixed.controllers[0].vendor_id = 0;
+	mixed.controllers[0].product_id = 0;
+	mixed.checksum = SwitchProPairingChecksum(&mixed);
+	assert(SwitchProPairingFilterSupported(&mixed, &filtered));
+	assert(filtered.count == 2);
+	assert(SwitchProPairingIsValid(&filtered));
+
+	/* Envelope corruption remains fatal even when supported entries exist. */
+	mixed.checksum ^= 1;
+	assert(!SwitchProPairingFilterSupported(&mixed, &filtered));
+	mixed.checksum ^= 1;
+	mixed.controllers[1].hci_link_key[0] = 0;
+	memset(mixed.controllers[1].hci_link_key, 0,
+		sizeof(mixed.controllers[1].hci_link_key));
+	mixed.checksum = SwitchProPairingChecksum(&mixed);
+	assert(!SwitchProPairingFilterSupported(&mixed, &filtered));
 
 	memset(&legacy, 0, sizeof(legacy));
 	legacy.magic = SWITCH_PRO_PAIRING_MAGIC;

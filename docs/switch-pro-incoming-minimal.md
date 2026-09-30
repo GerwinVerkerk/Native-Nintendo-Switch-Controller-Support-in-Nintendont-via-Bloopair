@@ -16,7 +16,11 @@ No address or link key is written to diagnostics.
 
 Automatic maintenance requires the companion Bloopair change in
 GaryOderNichts/Bloopair#212. Storage failures are retried by that component;
-Nintendont itself only consumes a complete, validated record at startup.
+Nintendont itself only consumes a complete, validated record at startup. The
+loader strictly validates record format, length, version and checksum, then
+filters entries by the supported original-controller identity `057e:2009`.
+An unsupported entry in an otherwise intact bundle is ignored; a malformed
+supported entry or damaged envelope rejects the bundle.
 
 Nintendont cannot call Bloopair after entering vWii: Bloopair patches IOSU's
 IOS-PAD and exposes its extension through Wii U `/dev/usb/btrm`, while the
@@ -51,3 +55,7 @@ The incoming path does not perform inquiry, in-game pairing, outgoing HID or
 remote-name detection. Pairing remains owned by Bloopair in Wii U mode.
 
 Development-only hardware tracing is not written by release builds.
+
+Unsupported controllers remain owned by Bloopair. Their presence, connection
+state and activation order must not block imported original Switch Pro
+Controllers or consume one of their available GameCube channels.

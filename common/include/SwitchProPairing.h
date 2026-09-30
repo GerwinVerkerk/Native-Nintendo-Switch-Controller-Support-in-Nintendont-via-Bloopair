@@ -111,6 +111,54 @@ static inline int SwitchProPairingIsValid(const SwitchProPairing *pairing)
 	return pairing->checksum == SwitchProPairingChecksum(pairing);
 }
 
+static inline int SwitchProPairingFilterSupported(
+	const SwitchProPairing *source, SwitchProPairing *filtered)
+{
+	uint8_t console_or = 0;
+	size_t i, j;
+	if(source == NULL || filtered == NULL ||
+		source->magic != SWITCH_PRO_PAIRING_MAGIC ||
+		source->version != SWITCH_PRO_PAIRING_VERSION ||
+		source->size != sizeof(*source) || source->count == 0 ||
+		source->count > SWITCH_PRO_PAIRING_MAX_CONTROLLERS ||
+		source->checksum != SwitchProPairingChecksum(source))
+		return 0;
+	for(i = 0; i < sizeof(source->console_bda); i++)
+		console_or |= source->console_bda[i];
+	if(!console_or)
+		return 0;
+
+	memset(filtered, 0, sizeof(*filtered));
+	filtered->magic = SWITCH_PRO_PAIRING_MAGIC;
+	filtered->version = SWITCH_PRO_PAIRING_VERSION;
+	filtered->size = sizeof(*filtered);
+	memcpy(filtered->console_bda, source->console_bda,
+		sizeof(filtered->console_bda));
+	for(i = 0; i < source->count; i++)
+	{
+		const SwitchProPairingEntry *entry = &source->controllers[i];
+		uint8_t address_or = 0, key_or = 0;
+		if(entry->controller_type != SWITCH_PRO_PAIRING_TYPE ||
+			entry->vendor_id != 0x057e || entry->product_id != 0x2009)
+			continue;
+		for(j = 0; j < sizeof(entry->controller_bda); j++)
+			address_or |= entry->controller_bda[j];
+		for(j = 0; j < sizeof(entry->hci_link_key); j++)
+			key_or |= entry->hci_link_key[j];
+		if(!address_or || !key_or)
+			return 0;
+		for(j = 0; j < filtered->count; j++)
+			if(memcmp(entry->controller_bda,
+				filtered->controllers[j].controller_bda, 6) == 0)
+				return 0;
+		filtered->controllers[filtered->count++] = *entry;
+	}
+	if(filtered->count == 0)
+		return 0;
+	filtered->checksum = SwitchProPairingChecksum(filtered);
+	return 1;
+}
+
 static inline uint32_t SwitchProPairingLegacyV2Checksum(
 	const SwitchProPairingLegacyV2 *pairing)
 {
