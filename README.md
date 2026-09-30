@@ -44,14 +44,13 @@ and the matching Bloopair fork build with its sync plugin.
 
 The hardware-tested source pair is:
 
-| Component | Tested commit | Draft prerelease |
+| Component | Tested commit | Prerelease |
 | --- | --- | --- |
 | Nintendont | `889420e` | [`switch-pro-bloopair-v0.1.0-rc1`](https://github.com/GerwinVerkerk/Nintendont/releases/tag/switch-pro-bloopair-v0.1.0-rc1) |
 | Bloopair, sync plugin and Koopair | `479479b` | [`switch-pro-nintendont-v0.1.0-rc1`](https://github.com/GerwinVerkerk/Bloopair/releases/tag/switch-pro-nintendont-v0.1.0-rc1) |
 
-These releases are currently **drafts**. Their downloads are not publicly
-available until the fork maintainer publishes them. Install both matching
-packages; upstream releases do not contain this integration.
+Download and install both matching prereleases. Do not use an upstream release,
+an older repository binary or a different fork build for this integration.
 
 #### Install, pair and play
 
@@ -99,6 +98,11 @@ route uses the companion Bloopair fork and sync plugin. See
 [technical details](docs/switch-pro-incoming-minimal.md).
 
 ### Quick Installation:
+> **Switch Pro through Bloopair:** do not use the repository `loader.dol` link
+> below. Install both matching fork prerelease packages listed in
+> [Switch Pro on Wii U](#switch-pro-on-wii-u). The upstream/repository binary
+> does not provide the complete tested integration.
+
 1. Get the [loader.dol](loader/loader.dol?raw=true), rename it to boot.dol and put it in /apps/Nintendont/ along with the files [meta.xml](nintendont/meta.xml?raw=true) and [icon.png](nintendont/icon.png?raw=true).
 2. Copy your GameCube games to the /games/ directory. Subdirectories are optional for 1-disc games in ISO/GCM and CISO format.
    * For 2-disc games, you should create a subdirectory /games/MYGAME/ (where MYGAME can be anything), then name disc 1 as "game.iso" and disc 2 as "disc2.iso".
