@@ -2,8 +2,8 @@
 #include <string.h>
 
 #include "SwitchProIncoming.h"
-#include "SwitchProPairing.h"
 #include "BTChannelEligibility.h"
+#include "SwitchProPairing.h"
 
 static void make_pairing(SwitchProPairing *pairing)
 {
@@ -171,6 +171,18 @@ static void test_transport_both_channel_orders(void)
 		assert(state.finalized == 1);
 		assert(!SwitchProIncomingNeedsFinalize(&state));
 	}
+}
+
+static void test_generic_channel_requires_valid_input(void)
+{
+	u8 valid[11] = { 0x3d };
+	u8 wrong_report[11] = { 0x30 };
+
+	assert(!BTGenericReportActivatesChannel(0x3d, valid, 10));
+	assert(!BTGenericReportActivatesChannel(0x34, valid, sizeof(valid)));
+	assert(!BTGenericReportActivatesChannel(0x3d, wrong_report,
+		sizeof(wrong_report)));
+	assert(BTGenericReportActivatesChannel(0x3d, valid, sizeof(valid)));
 }
 
 static void test_encrypted_reconnect_survives_redundant_auth_failure(void)
@@ -481,7 +493,6 @@ static void test_init_led_waits_for_channel_then_resumes(void)
 
 	make_ready(&state);
 	SwitchProIncomingStartInit(&state);
-	assert(!SwitchProIncomingReadyForChannel(&state));
 	for(i = 0; i < 10; i++)
 	{
 		u16 len = SwitchProIncomingBuildInit(&state, report,
@@ -498,7 +509,6 @@ static void test_init_led_waits_for_channel_then_resumes(void)
 	}
 	assert(state.init_index == 10);
 	assert(!state.awaiting_ack);
-	assert(SwitchProIncomingReadyForChannel(&state));
 	assert(!SwitchProIncomingBuildInit(&state, report,
 		sizeof(report), 0));
 	assert(!state.init_failed);
@@ -507,30 +517,6 @@ static void test_init_led_waits_for_channel_then_resumes(void)
 		sizeof(report), 0) == 12);
 	assert(report[10] == 0x30);
 	assert(report[11] == 0x01);
-}
-
-static void test_failed_init_never_becomes_channel_ready(void)
-{
-	struct SwitchProIncomingState state;
-	make_ready(&state);
-	SwitchProIncomingStartInit(&state);
-	state.identity_confirmed = 1;
-	state.init_index = 10;
-	assert(SwitchProIncomingReadyForChannel(&state));
-	state.init_failed = 1;
-	assert(!SwitchProIncomingReadyForChannel(&state));
-}
-
-static void test_unconfirmed_generic_controller_does_not_own_channel(void)
-{
-	u8 report[11];
-	memset(report, 0, sizeof(report));
-	report[0] = SWITCH_PRO_REPORT_FULL;
-	assert(!BTGenericReportActivatesChannel(0x3d, report, sizeof(report)));
-	report[0] = 0x3d;
-	assert(!BTGenericReportActivatesChannel(0x3d, report, 10));
-	assert(!BTGenericReportActivatesChannel(0x34, report, sizeof(report)));
-	assert(BTGenericReportActivatesChannel(0x3d, report, sizeof(report)));
 }
 
 static void test_player_led_retry_is_bounded_and_reconnect_resets(void)
@@ -671,6 +657,7 @@ static void test_full_report_end_to_end(void)
 
 int main(void)
 {
+	test_generic_channel_requires_valid_input();
 	test_pairing_record();
 	test_registration_is_independent_and_idempotent();
 	test_transport_both_channel_orders();
@@ -684,8 +671,6 @@ int main(void)
 	test_exact_linux_init_sequence();
 	test_player_led_channel_mapping_and_updates();
 	test_init_led_waits_for_channel_then_resumes();
-	test_failed_init_never_becomes_channel_ready();
-	test_unconfirmed_generic_controller_does_not_own_channel();
 	test_player_led_retry_is_bounded_and_reconnect_resets();
 	test_init_retries_and_ack_validation();
 	test_delayed_spi_ack_does_not_advance_next_read();

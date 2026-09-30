@@ -203,14 +203,6 @@ void SwitchProIncomingStartInit(struct SwitchProIncomingState *state)
 	state->report_counter = 0;
 }
 
-u8 SwitchProIncomingReadyForChannel(
-	const struct SwitchProIncomingState *state)
-{
-	return state != 0 && state->finalized && state->init_started &&
-		state->identity_confirmed && !state->init_failed &&
-		state->init_index >= 10 && !state->awaiting_ack;
-}
-
 u8 SwitchProIncomingPlayerLedMask(u8 channel)
 {
 	/* Nintendo's player patterns are cumulative: player N lights the first

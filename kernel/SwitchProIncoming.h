@@ -104,8 +104,6 @@ u8 SwitchProIncomingReady(const struct SwitchProIncomingState *state);
 u8 SwitchProIncomingNeedsFinalize(const struct SwitchProIncomingState *state);
 void SwitchProIncomingFinalized(struct SwitchProIncomingState *state);
 void SwitchProIncomingStartInit(struct SwitchProIncomingState *state);
-u8 SwitchProIncomingReadyForChannel(
-	const struct SwitchProIncomingState *state);
 u8 SwitchProIncomingPlayerLedMask(u8 channel);
 void SwitchProIncomingSetChannel(struct SwitchProIncomingState *state,
 	u8 channel);
