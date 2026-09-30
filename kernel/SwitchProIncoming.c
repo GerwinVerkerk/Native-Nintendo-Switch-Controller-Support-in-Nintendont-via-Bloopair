@@ -80,11 +80,10 @@ static void parse_full(struct SwitchProIncomingState *state,
 	u8 left = report[5];
 	u32 buttons = 0;
 
-	state->raw_left_y = switch_axis_y(&report[6]);
 	state->input.left_x = clamp_axis(
 		((s32)switch_axis_x(&report[6]) - 0x800) >> 4);
 	state->input.left_y = clamp_axis(
-		((s32)state->raw_left_y - 0x800) >> 4);
+		((s32)switch_axis_y(&report[6]) - 0x800) >> 4);
 	state->input.right_x = clamp_axis(
 		((s32)switch_axis_x(&report[9]) - 0x800) >> 4);
 	state->input.right_y = clamp_axis(

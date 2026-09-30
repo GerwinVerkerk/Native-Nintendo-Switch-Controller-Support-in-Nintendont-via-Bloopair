@@ -3,7 +3,6 @@
 
 #include "SwitchProIncoming.h"
 #include "SwitchProPairing.h"
-#include "SwitchProMinimalStatus.h"
 
 static void make_pairing(SwitchProPairing *pairing)
 {
@@ -42,13 +41,6 @@ static void test_pairing_record(void)
 	make_pairing(&pairing);
 	assert(sizeof(pairing) == 140);
 	assert(SWITCH_PRO_CANONICAL_CONTROLLER == 1);
-	assert(sizeof(SwitchProMinimalStatus) == 256);
-	assert(SWITCH_PRO_STATUS_VERSION == 7);
-	assert(SWITCH_PRO_STATUS_OWNER_NONE == 0);
-	assert(SWITCH_PRO_STATUS_OWNER_DEDICATED == 1);
-	assert(SWITCH_PRO_STATUS_OWNER_REGULAR_BASE == 0x100);
-	assert((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
-		SWITCH_PRO_STATUS_ARM_ADDR);
 	assert((SWITCH_PRO_PAIRING_PPC_ADDR & 0x1fffffffu) ==
 		SWITCH_PRO_PAIRING_ARM_ADDR);
 	assert(SwitchProPairingIsValid(&pairing));
@@ -261,14 +253,12 @@ static void test_full_left_y_gamecube_direction(void)
 	state.identity_confirmed = 1;
 	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
 		SWITCH_PRO_EVENT_INPUT);
-	assert(state.raw_left_y == 0x0fff);
 	assert(state.input.left_y == 127);
 
 	report[7] = 0x08;
 	report[8] = 0x00;
 	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
 		SWITCH_PRO_EVENT_INPUT);
-	assert(state.raw_left_y == 0x0000);
 	assert(state.input.left_y == -128);
 }
 
@@ -605,7 +595,6 @@ static void test_full_report_end_to_end(void)
 		SWITCH_PRO_EVENT_INPUT);
 	assert(state.full_reports == 1);
 	assert(state.input_valid);
-	assert(state.raw_left_y == 0x800);
 	assert(state.input.left_x == 0 && state.input.left_y == 0);
 	assert(state.input.right_x == 127 && state.input.right_y == 127);
 	assert(state.input.buttons & SWITCH_PRO_BTN_A);

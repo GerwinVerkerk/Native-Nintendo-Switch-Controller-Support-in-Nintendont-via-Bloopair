@@ -42,6 +42,3 @@ The explicit Nintendont mapping is therefore:
 6. Normal `0x30` input reports do not schedule or send LED commands.
 7. Disconnect resets LED state; reconnect and channel assignment therefore
    apply the current channel again.
-
-Status version 5 records `channel`, `led_desired_mask`, `led_sent_mask`,
-`led_acks`, and `led_send_attempts` for the bounded hardware tests.

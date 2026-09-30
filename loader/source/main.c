@@ -52,7 +52,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "ff_utf8.h"
 #include "diskio.h"
 #include "../../common/include/SwitchProPairing.h"
-#include "../../common/include/SwitchProMinimalStatus.h"
 // from diskio.c
 extern DISC_INTERFACE *driver[_VOLUMES];
 
@@ -253,35 +252,6 @@ static void LoadSwitchProPairingFromSd(void)
 		}
 	}
 	f_close(&file);
-}
-
-static void CopySwitchProMinimalStatusToSd(void)
-{
-	FIL source;
-	FIL destination;
-	SwitchProMinimalStatus status;
-	UINT read = 0;
-	UINT wrote = 0;
-
-	if(!devices[DEV_SD] || !devices[DEV_USB])
-		return;
-	if(f_open_char(&source, "usb:/" SWITCH_PRO_STATUS_PATH,
-		FA_READ | FA_OPEN_EXISTING) != FR_OK)
-		return;
-	if(f_size(&source) == sizeof(status) &&
-		f_read(&source, &status, sizeof(status), &read) == FR_OK &&
-		read == sizeof(status) && status.magic == SWITCH_PRO_STATUS_MAGIC &&
-		status.version == SWITCH_PRO_STATUS_VERSION &&
-		status.size == sizeof(status) &&
-		f_open_char(&destination, "sd:/" SWITCH_PRO_STATUS_PATH,
-			FA_WRITE | FA_CREATE_ALWAYS) == FR_OK)
-	{
-		f_write(&destination, &status, sizeof(status), &wrote);
-		f_close(&destination);
-		if(wrote == sizeof(status))
-			FlushDevices();
-	}
-	f_close(&source);
 }
 
 /**
@@ -835,7 +805,6 @@ int main(int argc, char **argv)
 		PrintFormat(DEFAULT_SIZE, MAROON, MENU_POS_X, 232, "No FAT device found!");
 		ExitToLoader(1);
 	}
-	CopySwitchProMinimalStatusToSd();
 	LoadSwitchProPairingFromSd();
 	// Seems like some programs start without any args
 	if(argc > 0 && argv != NULL && argv[0] != NULL)

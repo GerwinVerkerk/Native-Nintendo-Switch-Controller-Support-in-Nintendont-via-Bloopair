@@ -315,10 +315,7 @@ static void ImportSwitchPairing(void)
 	SwitchStatus->size = sizeof(*SwitchStatus);
 	SwitchStatus->channel = CHAN_NOT_SET;
 	for(i = 0; i < SWITCH_PRO_PAIRING_MAX_CONTROLLERS; i++)
-	{
 		SwitchStatus->slot_channel[i] = CHAN_NOT_SET;
-		SwitchStatus->slot_raw_left_y_min[i] = 0xffffffffu;
-	}
 	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	sync_before_read(shared, sizeof(*shared));
 	if(!SwitchProPairingIsValid(shared))
@@ -367,18 +364,6 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 		SwitchStatus->init_acks += event == SWITCH_PRO_EVENT_ACK;
 		SwitchStatus->slot_init_acks[SwitchSlotIndex(slot)] =
 			slot->incoming.init_acks;
-		if(report_id == SWITCH_PRO_REPORT_FULL)
-		{
-			u32 index = SwitchSlotIndex(slot);
-			u32 raw_y = slot->incoming.raw_left_y;
-			SwitchStatus->slot_raw_left_y[index] = raw_y;
-			if(raw_y < SwitchStatus->slot_raw_left_y_min[index])
-				SwitchStatus->slot_raw_left_y_min[index] = raw_y;
-			if(raw_y > SwitchStatus->slot_raw_left_y_max[index])
-				SwitchStatus->slot_raw_left_y_max[index] = raw_y;
-			SwitchStatus->slot_published_left_y[index] =
-				slot->incoming.input.left_y;
-		}
 		SwitchStatus->init_index = slot->incoming.init_index;
 		if(report_id == SWITCH_PRO_REPORT_FULL)
 			SwitchStatus->flags |= SWITCH_PRO_STATUS_FULL_SEEN;

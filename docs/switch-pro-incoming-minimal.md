@@ -14,6 +14,10 @@ Bloopair updates it atomically when a pairing becomes available, replaces a
 key after re-pairing and drops entries removed from the Wii U device database.
 No address or link key is written to diagnostics.
 
+Automatic maintenance requires the companion Bloopair change in
+GaryOderNichts/Bloopair#212. Storage failures are retried by that component;
+Nintendont itself only consumes a complete, validated record at startup.
+
 Nintendont cannot call Bloopair after entering vWii: Bloopair patches IOSU's
 IOS-PAD and exposes its extension through Wii U `/dev/usb/btrm`, while the
 Nintendont loader runs under vWii IOS58 and uses FatFS. The loader therefore
@@ -46,17 +50,4 @@ that environment.
 The incoming path does not perform inquiry, in-game pairing, outgoing HID or
 remote-name detection. Pairing remains owned by Bloopair in Wii U mode.
 
-## Diagnostic status
-
-During the game the kernel maintains a version-7, 256-byte status record with
-bounded per-slot counters, channels, initialization ACKs and raw/published
-left-Y extrema. It never contains Bluetooth addresses or link-key bytes. On a
-normal game exit or the Nintendont exit combination it is written once to
-`switch-pro-minimal.bin` on the active game device. At the next Nintendont
-start, a USB copy is copied to SD when both devices are mounted.
-
-Decode it with:
-
-```sh
-python3 tools/decode_switch_pro_minimal.py switch-pro-minimal.bin
-```
+Development-only hardware tracing is not written by release builds.

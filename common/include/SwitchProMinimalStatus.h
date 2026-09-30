@@ -87,14 +87,10 @@ typedef struct __attribute__((packed)) {
 	uint32_t slot_published_mask;
 	uint32_t slot_connected_mask;
 	uint32_t reserved;
-	uint32_t slot_raw_left_y[4];
-	uint32_t slot_raw_left_y_min[4];
-	uint32_t slot_raw_left_y_max[4];
-	int32_t slot_published_left_y[4];
 } SwitchProMinimalStatus;
 
 typedef char SwitchProMinimalStatusSizeCheck[
-	(sizeof(SwitchProMinimalStatus) == 256) ? 1 : -1];
+	(sizeof(SwitchProMinimalStatus) == 192) ? 1 : -1];
 typedef char SwitchProMinimalStatusAddressAliasCheck[
 	((SWITCH_PRO_STATUS_PPC_ADDR & 0x1fffffffu) ==
 	SWITCH_PRO_STATUS_ARM_ADDR) ? 1 : -1];
