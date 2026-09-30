@@ -45,9 +45,14 @@ that environment.
    tick verifies aggregate BTE state and both L2CAP PCBs before publication.
 5. Each slot runs the twelve-command `hid-nintendo` initialization sequence.
    Commands require matching positive `0x21` responses and have bounded retry.
-6. Device Info confirms identity. Native `0x30` input reports are translated
-   to the existing `C_CCP`/`BTPadCont` contract and assigned to a free
-   GameCube channel. Basic `0x3f` reports are not published.
+   A GameCube channel becomes eligible only after identity confirmation and
+   the first ten acknowledgements, immediately before the channel-dependent
+   player-LED command.
+6. Native `0x30` input reports are translated to the existing
+   `C_CCP`/`BTPadCont` contract. Ordinary Bluetooth candidates likewise remain
+   unassigned until their expected input report is actually validated; a
+   stored name or connection attempt alone cannot reserve a player slot.
+   Basic Switch `0x3f` reports are not published.
 7. Player LEDs follow the definitive GameCube channel and are reapplied after
    reconnect or reassignment without sending on every input report.
 
@@ -59,3 +64,4 @@ Development-only hardware tracing is not written by release builds.
 Unsupported controllers remain owned by Bloopair. Their presence, connection
 state and activation order must not block imported original Switch Pro
 Controllers or consume one of their available GameCube channels.
+Initialization failure, timeout and disconnect paths release any assignment.

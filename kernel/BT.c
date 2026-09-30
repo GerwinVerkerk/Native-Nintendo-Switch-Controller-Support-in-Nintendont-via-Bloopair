@@ -30,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "lwbt/physbusif.h"
 #include "Config.h"
 #include "SwitchProIncoming.h"
+#include "BTChannelEligibility.h"
 #include "../common/include/SwitchProPairing.h"
 #include "../common/include/SwitchProMinimalStatus.h"
 
@@ -39,7 +40,9 @@ static vu32 BTChannelsUsed = 0;
 extern vu32 intr, bulk;
 
 static conf_pads *BTDevices = (conf_pads*)0x132C0000;
-static struct BTPadStat *BTPadConnected[4];
+#define BT_CONNECTED_CAPACITY \
+	(CONF_PAD_MAX_REGISTERED + SWITCH_PRO_PAIRING_MAX_CONTROLLERS)
+static struct BTPadStat *BTPadConnected[BT_CONNECTED_CAPACITY];
 
 static struct BTPadStat BTPadStatus[CONF_PAD_MAX_REGISTERED] ALIGNED(32);
 struct SwitchProSlot {
@@ -215,14 +218,14 @@ static s32 BTTryFinalizeSwitchConnection(struct SwitchProSlot *slot)
 		return ERR_OK;
 	if(!SwitchProIncomingNeedsFinalize(&slot->incoming))
 		return ERR_CONN;
-	if(BTChannelsUsed >= 4)
+	if(BTChannelsUsed >= BT_CONNECTED_CAPACITY)
 		return ERR_USE;
 
 	SwitchProIncomingFinalized(&slot->incoming);
 	slot->pad.channel = CHAN_NOT_SET;
 	slot->pad.rumble = 0;
 	slot->pad.transferstate = TRANSFER_DONE;
-	slot->pad.controller = C_CCP;
+	slot->pad.controller = C_NOT_SET;
 	BTPadConnected[BTChannelsUsed++] = &slot->pad;
 	SwitchStatus->slot_connected_mask |= 1u << SwitchSlotIndex(slot);
 	sync_after_write(&slot->pad, sizeof(slot->pad));
@@ -373,6 +376,11 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 				SwitchStatus->flags |= SWITCH_PRO_STATUS_DEVICE_INFO;
 			if(slot->incoming.init_complete)
 				SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_COMPLETE;
+			else if(SwitchProIncomingReadyForChannel(&slot->incoming))
+			{
+				slot->pad.controller = C_CCP;
+				sync_after_write(&slot->pad, sizeof(slot->pad));
+			}
 			else
 				BTSendSwitchInit(slot,0);
 			SwitchStatus->led_acks += ((const u8*)buffer)[14] == 0x30;
@@ -391,6 +399,9 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 
 	if(*(u8*)buffer == 0x3D)	//21 expansion bytes report
 	{
+		if(!BTGenericReportActivatesChannel(stat->transfertype,
+			(const u8*)buffer,len))
+			return ERR_VAL;
 		if(stat->transferstate == TRANSFER_CALIBRATE)
 		{
 			stat->xAxisLmid = bswap16(R16((u32)(((u8*)buffer)+1)));
@@ -398,6 +409,7 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 			stat->yAxisLmid = bswap16(R16((u32)(((u8*)buffer)+5)));
 			stat->yAxisRmid = bswap16(R16((u32)(((u8*)buffer)+7)));
 			stat->transferstate = TRANSFER_DONE;
+			stat->controller = C_CCP;
 			sync_after_write(arg, sizeof(struct BTPadStat));
 			sync_before_read(arg, sizeof(struct BTPadStat));
 		}
@@ -903,7 +915,7 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 		return ERR_OK;
 	}
 
-	if(BTChannelsUsed >= 4)
+	if(BTChannelsUsed >= BT_CONNECTED_CAPACITY)
 	{
 		bte_disconnect(stat->sock);
 		return ERR_OK;
@@ -913,6 +925,7 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 
 	stat->channel = CHAN_NOT_SET;
 	stat->rumble = 0;
+	stat->timeout = read32(HW_TIMER);
 
 	BTSetControllerState(stat->sock, LEDState[CHAN_NOT_SET]);
 
@@ -935,7 +948,9 @@ static s32 BTHandleConnect(void *arg,struct bte_pcb *pcb,u8 err)
 		buf[2] = stat->transfertype;
 		bte_senddata(stat->sock,buf,3);
 		stat->transferstate = TRANSFER_CALIBRATE;
-		stat->controller = C_CCP;
+		/* The stored name only selects an expected report format.  Wait for
+		 * an actual valid report before assigning a GameCube channel. */
+		stat->controller = C_NOT_SET;
 	}
 
 	BTPadConnected[BTChannelsUsed] = stat;
@@ -950,24 +965,24 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 	(void)err;
 	//dbgprintf("Controller disconnected\n");
 	u32 i;
-	for(i = 0; i < 4; ++i)
+	for(i = 0; i < BTChannelsUsed; ++i)
 	{
 		if(BTPadConnected[i] == arg)
 		{
-			if(BTChannelsUsed)
-				BTChannelsUsed--;
+			u32 connected = BTChannelsUsed;
 			u32 chan = BTPadConnected[i]->channel;
 			if(chan != CHAN_NOT_SET)
 			{
 				BTPad[chan].used = C_NOT_SET;
 				sync_after_write(&BTPad[chan], 0x20);
 			}
-			while(i+1 < 4)
+			while(i + 1 < connected)
 			{
 				BTPadConnected[i] = BTPadConnected[i+1];
-				BTPadConnected[i+1] = NULL;
 				i++;
 			}
+			BTPadConnected[connected - 1] = NULL;
+			BTChannelsUsed = connected - 1;
 			break;
 		}
 	}
@@ -1268,6 +1283,22 @@ void BTUpdateRegisters(void)
 		if(BTStackReady && SwitchProIncomingNeedsListener(&slot->incoming))
 			EnsureSwitchPad(slot);
 		BTPumpSwitchConnection(slot);
+		if(slot->incoming.init_failed && slot->pad.sock != NULL)
+		{
+			struct bte_pcb *failed_sock = slot->pad.sock;
+			slot->pad.controller = C_NOT_SET;
+			if(slot->pad.channel < CHAN_NOT_SET)
+			{
+				BTPad[slot->pad.channel].used = C_NOT_SET;
+				sync_after_write(&BTPad[slot->pad.channel],
+					sizeof(struct BTPadCont));
+				slot->pad.channel = CHAN_NOT_SET;
+			}
+			sync_after_write(&slot->pad, sizeof(slot->pad));
+			slot->pad.sock = NULL;
+			bte_disconnect(failed_sock);
+			continue;
+		}
 		/* Channel assignment may arrive after the first ten init ACKs.  The
 		 * channel-dependent player-LED command deliberately waits for that
 		 * assignment, so resume the sequence once no command is outstanding. */
@@ -1348,7 +1379,8 @@ void BTUpdateRegisters(void)
 
 		if(LastChan != CurChan || LastRumble != CurRumble)
 		{
-			if(CurChan == CHAN_NOT_SET || ((LastChan != CHAN_NOT_SET) && CurChan < LastChan))
+			if(LastChan != CHAN_NOT_SET &&
+				(CurChan == CHAN_NOT_SET || CurChan < LastChan))
 			{
 				BTPad[LastChan].used = C_NOT_SET;
 				sync_after_write(&BTPad[LastChan], sizeof(struct BTPadCont));
