@@ -30,8 +30,7 @@ the ARM kernel consumes that copy. A legacy version-2 single-controller file
 is accepted for rollback compatibility.
 
 The sync component requires Aroma's Wii U Plugin System. Tiramisu has no WUPS
-runtime, so Bloopair retains Koopair's explicitly labelled manual fallback for
-that environment.
+runtime and therefore does not provide the automatic handoff.
 
 ## Connection stateflow
 

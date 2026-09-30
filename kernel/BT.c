@@ -32,7 +32,6 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include "SwitchProIncoming.h"
 #include "BTChannelEligibility.h"
 #include "../common/include/SwitchProPairing.h"
-#include "../common/include/SwitchProMinimalStatus.h"
 
 extern int dbgprintf( const char *fmt, ...);
 
@@ -55,8 +54,6 @@ static struct SwitchProSlot SwitchSlots[SWITCH_PRO_PAIRING_MAX_CONTROLLERS] ALIG
 static u8 SwitchSlotCount = 0;
 static struct SwitchProSlot *SwitchSecurityCommandSlot = NULL;
 static u8 BTStackReady = 0;
-static SwitchProMinimalStatus *SwitchStatus =
-	(SwitchProMinimalStatus*)SWITCH_PRO_STATUS_ARM_ADDR;
 
 static struct BTPadCont *BTPad = (struct BTPadCont*)0x132F0000;
 
@@ -137,24 +134,6 @@ static struct SwitchProSlot *SwitchSlotForAddress(const struct bd_addr *bdaddr)
 	return NULL;
 }
 
-static void SetSwitchStatusFlag(u32 flag)
-{
-	SwitchStatus->flags |= flag;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
-}
-
-static void SetSwitchStatusError(s32 error)
-{
-	if(error != ERR_OK)
-		SwitchStatus->last_error = error;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
-}
-
-static u32 SwitchSlotIndex(const struct SwitchProSlot *slot)
-{
-	return (u32)(slot - SwitchSlots);
-}
-
 static s32 BTSendSwitchInit(struct SwitchProSlot *slot,u8 retry)
 {
 	u8 report[16];
@@ -164,28 +143,14 @@ static s32 BTSendSwitchInit(struct SwitchProSlot *slot,u8 retry)
 
 	if(len == 0)
 	{
-		if(slot->incoming.init_failed)
-			SetSwitchStatusFlag(SWITCH_PRO_STATUS_INIT_FAILED);
 		return ERR_VAL;
 	}
 	slot->init_timer = read32(HW_TIMER);
-	SwitchStatus->init_send_attempts++;
 	result = bte_senddata(slot->pad.sock, report, len);
-	SwitchStatus->init_last_send_result = result;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	if(result != ERR_OK)
 	{
-		SetSwitchStatusError(result);
 		return result;
 	}
-	SwitchStatus->init_sent += 1;
-	SwitchStatus->init_retries += retry ? 1 : 0;
-	SwitchStatus->init_index = slot->incoming.init_index;
-	if(retry)
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_RETRIED;
-	if(slot->incoming.pending_subcommand == 0x03)
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_REPORT_MODE;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	return ERR_OK;
 }
 
@@ -199,14 +164,7 @@ static s32 BTSendSwitchLed(struct SwitchProSlot *slot,u8 retry)
 	if(len == 0)
 		return ERR_VAL;
 	slot->init_timer = read32(HW_TIMER);
-	SwitchStatus->led_send_attempts++;
-	SwitchStatus->led_desired_mask = slot->incoming.desired_led_mask;
-	SwitchStatus->led_sent_mask = slot->incoming.sent_led_mask;
 	result = bte_senddata(slot->pad.sock, report, len);
-	SwitchStatus->init_last_send_result = result;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
-	if(result != ERR_OK)
-		SetSwitchStatusError(result);
 	return result;
 }
 
@@ -225,12 +183,9 @@ static s32 BTTryFinalizeSwitchConnection(struct SwitchProSlot *slot)
 	slot->pad.transferstate = TRANSFER_DONE;
 	slot->pad.controller = C_CCP;
 	BTPadConnected[BTChannelsUsed++] = &slot->pad;
-	SwitchStatus->slot_connected_mask |= 1u << SwitchSlotIndex(slot);
 	sync_after_write(&slot->pad, sizeof(slot->pad));
-	SetSwitchStatusFlag(SWITCH_PRO_STATUS_CONNECTED);
 
 	SwitchProIncomingStartInit(&slot->incoming);
-	SetSwitchStatusFlag(SWITCH_PRO_STATUS_INIT_STARTED);
 	return BTSendSwitchInit(slot,0);
 }
 
@@ -245,35 +200,22 @@ static void BTPumpSwitchConnection(struct SwitchProSlot *slot)
 		slot->incoming.init_failed)
 		return;
 
-	SwitchStatus->transport_checks++;
 	transport_ready = bte_ready_for_data(slot->pad.sock,&bte_state,
 		&control_state,&data_state);
-	SwitchStatus->bte_state = bte_state;
-	SwitchStatus->control_l2cap_state = control_state;
-	SwitchStatus->interrupt_l2cap_state = data_state;
 	SwitchProIncomingTransport(&slot->incoming,transport_ready);
 	if(!transport_ready)
 	{
-		SwitchStatus->transport_deferred++;
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_PENDING;
 		if(slot->transport_timer == 0)
 			slot->transport_timer = read32(HW_TIMER);
 		else if(TimerDiffSeconds(slot->transport_timer) >=
 			SWITCH_PRO_TRANSPORT_TIMEOUT_SECONDS)
 		{
 			slot->incoming.init_failed = 1;
-			SwitchStatus->transport_timeouts++;
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_TIMEOUT |
-				SWITCH_PRO_STATUS_INIT_FAILED;
-			SetSwitchStatusError(ERR_CONN);
 		}
-		sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 		return;
 	}
 
 	slot->transport_timer = 0;
-	SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_READY;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	BTTryFinalizeSwitchConnection(slot);
 }
 
@@ -293,13 +235,7 @@ static void PublishSwitchInput(struct SwitchProSlot *slot)
 	BTPad[chan].triggerR =
 		(slot->incoming.input.buttons & SWITCH_PRO_BTN_ZR) ? 0xff : 0;
 	BTPad[chan].used = C_CCP;
-	SwitchStatus->publishes++;
-	SwitchStatus->channel = chan;
-	SwitchStatus->slot_channel[SwitchSlotIndex(slot)] = chan;
-	SwitchStatus->slot_published_mask |= 1u << SwitchSlotIndex(slot);
-	SwitchStatus->flags |= SWITCH_PRO_STATUS_PUBLISHED;
 	sync_after_write(&BTPad[chan], sizeof(struct BTPadCont));
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 }
 
 static void ImportSwitchPairing(void)
@@ -310,19 +246,10 @@ static void ImportSwitchPairing(void)
 
 	memset(SwitchSlots, 0, sizeof(SwitchSlots));
 	SwitchSlotCount = 0;
-	memset(SwitchStatus, 0, sizeof(*SwitchStatus));
-	SwitchStatus->magic = SWITCH_PRO_STATUS_MAGIC;
-	SwitchStatus->version = SWITCH_PRO_STATUS_VERSION;
-	SwitchStatus->size = sizeof(*SwitchStatus);
-	SwitchStatus->channel = CHAN_NOT_SET;
-	for(i = 0; i < SWITCH_PRO_PAIRING_MAX_CONTROLLERS; i++)
-		SwitchStatus->slot_channel[i] = CHAN_NOT_SET;
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 	sync_before_read(shared, sizeof(*shared));
 	if(!SwitchProPairingIsValid(shared))
 		return;
 	SwitchSlotCount = shared->count;
-	SwitchStatus->slot_count = SwitchSlotCount;
 	for(i = 0; i < SwitchSlotCount; i++)
 	{
 		u8 address[6];
@@ -334,7 +261,6 @@ static void ImportSwitchPairing(void)
 		SwitchProIncomingReset(&slot->incoming);
 		SwitchProIncomingImported(&slot->incoming);
 	}
-	SetSwitchStatusFlag(SWITCH_PRO_STATUS_PAIRING_VALID);
 }
 
 static void BTSetControllerState(struct bte_pcb *sock, u32 State)
@@ -358,35 +284,17 @@ static s32 BTHandleData(void *arg,void *buffer,u16 len)
 			return ERR_VAL;
 		event = SwitchProIncomingHandleReport(&slot->incoming,
 			(const u8*)buffer,len);
-		u8 report_id = len > 0 ? ((const u8*)buffer)[0] : 0;
-		SwitchStatus->command_reports +=
-			report_id == SWITCH_PRO_REPORT_COMMAND;
-		SwitchStatus->full_reports += report_id == SWITCH_PRO_REPORT_FULL;
-		SwitchStatus->init_acks += event == SWITCH_PRO_EVENT_ACK;
-		SwitchStatus->slot_init_acks[SwitchSlotIndex(slot)] =
-			slot->incoming.init_acks;
-		SwitchStatus->init_index = slot->incoming.init_index;
-		if(report_id == SWITCH_PRO_REPORT_FULL)
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_FULL_SEEN;
 		if(event == SWITCH_PRO_EVENT_ACK)
 		{
-			if(((const u8*)buffer)[14] == 0x02)
-				SwitchStatus->flags |= SWITCH_PRO_STATUS_DEVICE_INFO;
-			if(slot->incoming.init_complete)
-				SwitchStatus->flags |= SWITCH_PRO_STATUS_INIT_COMPLETE;
-			else
+			if(!slot->incoming.init_complete)
 				BTSendSwitchInit(slot,0);
-			SwitchStatus->led_acks += ((const u8*)buffer)[14] == 0x30;
 			if(SwitchProIncomingNeedsLedUpdate(&slot->incoming))
 				BTSendSwitchLed(slot,0);
 		}
 		else if(event == SWITCH_PRO_EVENT_INPUT)
 		{
-			SwitchStatus->parsed_reports++;
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_FULL_PARSED;
 			PublishSwitchInput(slot);
 		}
-		sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 		return ERR_OK;
 	}
 
@@ -982,12 +890,6 @@ static s32 BTHandleDisconnect(void *arg,struct bte_pcb *pcb,u8 err)
 		struct SwitchProSlot *slot = SwitchSlotForPad((struct BTPadStat*)arg);
 		if(slot != NULL)
 		{
-			SwitchStatus->slot_connected_mask &=
-				~(1u << SwitchSlotIndex(slot));
-			SwitchStatus->slot_published_mask &=
-				~(1u << SwitchSlotIndex(slot));
-			SwitchStatus->slot_channel[SwitchSlotIndex(slot)] =
-				CHAN_NOT_SET;
 			SwitchProIncomingReset(&slot->incoming);
 			SwitchProIncomingImported(&slot->incoming);
 			SwitchProIncomingListener(&slot->incoming,ERR_OK);
@@ -1038,10 +940,6 @@ static void EnsureSwitchPad(struct SwitchProSlot *slot)
 		result = bte_registerdeviceasync(slot->pad.sock,
 			&slot->address,BTHandleConnect);
 	SwitchProIncomingListener(&slot->incoming,result);
-	SwitchStatus->listener_result = result;
-	SetSwitchStatusError(result);
-	if(result == ERR_OK)
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_LISTENER_READY);
 }
 
 static s32 BTCompleteCB(s32 result,void *usrdata)
@@ -1063,9 +961,6 @@ static s32 BTCompleteCB(s32 result,void *usrdata)
 							BTDevices->registered[i].bdaddr[2],BTDevices->registered[i].bdaddr[1],BTDevices->registered[i].bdaddr[0]);
 			if(SwitchSlotForAddress(&bdaddr) != NULL)
 			{
-				SwitchStatus->stored_address_matches++;
-				SwitchStatus->flags |=
-					SWITCH_PRO_STATUS_DUPLICATE_LISTENER;
 				/* The imported Switch listener already owns this address.
 				 * Registering the stored vWii entry afterwards would put its
 				 * L2CAP listeners at the head of the first-match list. */
@@ -1104,8 +999,6 @@ u8 BTSwitchIncomingGetKey(struct bd_addr *bdaddr,u8 *key)
 	struct SwitchProSlot *slot = SwitchSlotForAddress(bdaddr);
 	if(slot == NULL || key == NULL)
 		return 0;
-	SwitchStatus->key_requests++;
-	SetSwitchStatusFlag(SWITCH_PRO_STATUS_KEY_REPLIED);
 	SwitchProPairingCopyHciLinkKey(&slot->pairing,key);
 	return 1;
 }
@@ -1116,8 +1009,6 @@ u8 BTSwitchIncomingACL(struct bd_addr *bdaddr)
 	if(slot == NULL)
 		return 0;
 	SwitchProIncomingACL(&slot->incoming,ERR_OK);
-	SwitchStatus->acl_count++;
-	SetSwitchStatusFlag(SWITCH_PRO_STATUS_ACL_CONNECTED);
 	/* The controller owns security setup on an incoming stored-key
 	 * reconnect.  It requests the link key and enables encryption itself;
 	 * issuing a second Authentication Requested here makes the otherwise
@@ -1132,11 +1023,6 @@ void BTSwitchIncomingAuthentication(struct bd_addr *bdaddr,u8 result)
 	if(slot == NULL)
 		return;
 	SwitchProIncomingAuthentication(&slot->incoming,result);
-	SwitchStatus->auth_result = result;
-	if(result == HCI_SUCCESS)
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_AUTHENTICATED);
-	else if(!slot->incoming.encrypted)
-		SetSwitchStatusError(ERR_CONN);
 	if(result != HCI_SUCCESS)
 	{
 		if(!slot->incoming.encrypted)
@@ -1147,11 +1033,8 @@ void BTSwitchIncomingAuthentication(struct bd_addr *bdaddr,u8 result)
 		return;
 	SwitchSecurityCommandSlot = slot;
 	command_result = hci_set_connection_encrypt(bdaddr,1);
-	if(command_result == ERR_OK)
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_ENCRYPT_REQUESTED);
 	if(command_result != ERR_OK)
 	{
-		SetSwitchStatusError(command_result);
 		bte_security_complete(slot->pad.sock,command_result);
 	}
 }
@@ -1162,63 +1045,20 @@ void BTSwitchIncomingEncryption(struct bd_addr *bdaddr,u8 result,u8 enabled)
 	if(slot == NULL)
 		return;
 	SwitchProIncomingEncryption(&slot->incoming,result,enabled);
-	SwitchStatus->encrypt_result = result | ((u32)enabled << 8);
-	if(result == HCI_SUCCESS && enabled)
-	{
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_AUTHENTICATED);
-		SetSwitchStatusFlag(SWITCH_PRO_STATUS_ENCRYPTED);
-	}
-	else
-		SetSwitchStatusError(ERR_CONN);
 	bte_security_complete(slot->pad.sock,
 		(result == HCI_SUCCESS && enabled) ? ERR_OK : ERR_CONN);
-	if(result == HCI_SUCCESS && enabled)
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_TRANSPORT_PENDING;
-}
-
-static u32 BTSwitchChannelOwner(struct SwitchProSlot *slot,struct bte_pcb *owner)
-{
-	u32 i;
-	if(owner == NULL)
-		return SWITCH_PRO_STATUS_OWNER_UNKNOWN;
-	if(owner == slot->pad.sock)
-		return SWITCH_PRO_STATUS_OWNER_DEDICATED;
-	for(i = 0; i < CONF_PAD_MAX_REGISTERED; i++)
-	{
-		if(owner == BTPadStatus[i].sock)
-			return SWITCH_PRO_STATUS_OWNER_REGULAR_BASE + i;
-	}
-	return SWITCH_PRO_STATUS_OWNER_UNKNOWN;
 }
 
 void BTSwitchIncomingChannel(struct bd_addr *bdaddr,u8 control_channel,
 	struct bte_pcb *owner)
 {
-	u32 owner_code;
+	(void)owner;
 	struct SwitchProSlot *slot = SwitchSlotForAddress(bdaddr);
 	if(slot == NULL)
 		return;
-	owner_code = BTSwitchChannelOwner(slot,owner);
-	if(control_channel)
-	{
-		SwitchStatus->control_count++;
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_CONTROL_OPEN;
-		SwitchStatus->control_channel_owner = owner_code;
-		if(owner_code == SWITCH_PRO_STATUS_OWNER_DEDICATED)
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_CONTROL_DEDICATED;
-	}
-	else
-	{
-		SwitchStatus->interrupt_count++;
-		SwitchStatus->flags |= SWITCH_PRO_STATUS_INTERRUPT_OPEN;
-		SwitchStatus->interrupt_channel_owner = owner_code;
-		if(owner_code == SWITCH_PRO_STATUS_OWNER_DEDICATED)
-			SwitchStatus->flags |= SWITCH_PRO_STATUS_INTERRUPT_DEDICATED;
-	}
 	SwitchProIncomingChannels(&slot->incoming,
 		slot->incoming.control_open || control_channel,
 		slot->incoming.interrupt_open || !control_channel);
-	sync_after_write(SwitchStatus, sizeof(*SwitchStatus));
 }
 
 void BTSwitchIncomingCommandStatus(u8 command,u8 result)
@@ -1232,7 +1072,6 @@ void BTSwitchIncomingCommandStatus(u8 command,u8 result)
 		return;
 	if(slot->incoming.encrypted)
 		return;
-	SetSwitchStatusError(ERR_CONN);
 	bte_security_complete(slot->pad.sock,ERR_CONN);
 }
 
@@ -1368,10 +1207,6 @@ void BTUpdateRegisters(void)
 				if(slot == NULL)
 					continue;
 				SwitchProIncomingSetChannel(&slot->incoming,CurChan);
-				SwitchStatus->channel = CurChan;
-				SwitchStatus->slot_channel[SwitchSlotIndex(slot)] = CurChan;
-				SwitchStatus->led_desired_mask =
-					slot->incoming.desired_led_mask;
 				PublishSwitchInput(slot);
 			}
 			else if(BTPadConnected[i]->transfertype == 0x3D || BTPadConnected[i]->controller & (C_RUMBLE_WM | C_NUN) || ConfigGetConfig(NIN_CFG_CC_RUMBLE))

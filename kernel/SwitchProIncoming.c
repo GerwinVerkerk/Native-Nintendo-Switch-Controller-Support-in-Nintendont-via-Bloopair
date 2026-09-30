@@ -15,11 +15,6 @@ static s16 clamp_axis(s32 value)
 	return (s16)value;
 }
 
-static u16 read_le16(const u8 *data)
-{
-	return data[0] | ((u16)data[1] << 8);
-}
-
 struct SwitchProInitCommand {
 	u8 command;
 	u8 data_len;
@@ -45,22 +40,6 @@ static const struct SwitchProInitCommand SwitchProInitCommands[] = {
 typedef char SwitchProInitCommandCountCheck[
 	(sizeof(SwitchProInitCommands) / sizeof(SwitchProInitCommands[0]) ==
 	SWITCH_PRO_INIT_COMMAND_COUNT) ? 1 : -1];
-
-static void add_dpad(u8 dpad, u32 *buttons)
-{
-	switch(dpad)
-	{
-		case 0: *buttons |= SWITCH_PRO_BTN_UP; break;
-		case 1: *buttons |= SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_RIGHT; break;
-		case 2: *buttons |= SWITCH_PRO_BTN_RIGHT; break;
-		case 3: *buttons |= SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_RIGHT; break;
-		case 4: *buttons |= SWITCH_PRO_BTN_DOWN; break;
-		case 5: *buttons |= SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_LEFT; break;
-		case 6: *buttons |= SWITCH_PRO_BTN_LEFT; break;
-		case 7: *buttons |= SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_LEFT; break;
-		default: break;
-	}
-}
 
 static u16 switch_axis_x(const u8 *data)
 {
@@ -110,7 +89,6 @@ static void parse_full(struct SwitchProIncomingState *state,
 void SwitchProIncomingReset(struct SwitchProIncomingState *state)
 {
 	memset(state, 0, sizeof(*state));
-	state->drop_first_basic_report = 1;
 }
 
 void SwitchProIncomingImported(struct SwitchProIncomingState *state)
@@ -153,7 +131,6 @@ void SwitchProIncomingEncryption(struct SwitchProIncomingState *state,
 	 * completed for this incoming connection. */
 	if(state->encrypted)
 		state->authenticated = 1;
-	state->connected = SwitchProIncomingReady(state);
 }
 
 void SwitchProIncomingChannels(struct SwitchProIncomingState *state,
@@ -161,7 +138,6 @@ void SwitchProIncomingChannels(struct SwitchProIncomingState *state,
 {
 	state->control_open = control_open != 0;
 	state->interrupt_open = interrupt_open != 0;
-	state->connected = SwitchProIncomingReady(state);
 }
 
 void SwitchProIncomingTransport(struct SwitchProIncomingState *state,
@@ -199,7 +175,6 @@ void SwitchProIncomingStartInit(struct SwitchProIncomingState *state)
 	state->init_index = 0;
 	state->init_retries = 0;
 	state->awaiting_ack = 0;
-	state->pending_subcommand = 0;
 	state->report_counter = 0;
 }
 
@@ -282,9 +257,7 @@ u16 SwitchProIncomingBuildInit(struct SwitchProIncomingState *state,
 			report[11] = state->sent_led_mask;
 		}
 	}
-	state->pending_subcommand = entry->command;
 	state->awaiting_ack = 1;
-	state->init_sent++;
 	return size;
 }
 
@@ -319,7 +292,6 @@ u16 SwitchProIncomingBuildLedUpdate(struct SwitchProIncomingState *state,
 	report[10] = 0x30;
 	report[11] = state->sent_led_mask;
 	state->led_awaiting_ack = 1;
-	state->led_sent++;
 	return 12;
 }
 
@@ -332,7 +304,6 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 		return SWITCH_PRO_EVENT_NONE;
 	if(report[0] == SWITCH_PRO_REPORT_FULL && len >= 12)
 	{
-		state->full_reports++;
 		parse_full(state, report);
 		state->input_valid = state->identity_confirmed;
 		return state->input_valid ? SWITCH_PRO_EVENT_INPUT :
@@ -341,7 +312,6 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 	if(report[0] != SWITCH_PRO_REPORT_COMMAND || len < 15)
 		return SWITCH_PRO_EVENT_NONE;
 
-	state->command_reports++;
 	if(state->led_awaiting_ack && report[14] == 0x30)
 	{
 		if((report[13] & 0x80) == 0)
@@ -349,7 +319,6 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 		state->led_awaiting_ack = 0;
 		state->led_retries = 0;
 		state->applied_led_mask = state->sent_led_mask;
-		state->led_acks++;
 		return SWITCH_PRO_EVENT_ACK;
 	}
 	if(!state->init_started || state->init_complete || state->init_failed ||
@@ -369,64 +338,13 @@ s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 		return SWITCH_PRO_EVENT_NEGATIVE_ACK;
 
 	state->awaiting_ack = 0;
-	state->pending_subcommand = 0;
 	state->init_retries = 0;
-	state->init_acks++;
 	if(entry->command == 0x30)
-	{
 		state->applied_led_mask = state->sent_led_mask;
-		state->led_acks++;
-	}
 	if(state->init_index == 0)
 		state->identity_confirmed = 1;
 	state->init_index++;
 	if(state->init_index >= SWITCH_PRO_INIT_COMMAND_COUNT)
 		state->init_complete = 1;
 	return SWITCH_PRO_EVENT_ACK;
-}
-
-s32 SwitchProIncomingParseBasic(struct SwitchProIncomingState *state,
-	const u8 *report, u16 len)
-{
-	u8 primary;
-	u8 shared;
-	u32 buttons = 0;
-
-	if(state == 0 || report == 0 || len < 12 ||
-		report[0] != SWITCH_PRO_REPORT_BASIC)
-		return 0;
-
-	state->basic_reports++;
-	if(state->drop_first_basic_report)
-	{
-		state->drop_first_basic_report = 0;
-		return 0;
-	}
-
-	primary = report[1];
-	shared = report[2];
-	state->input.left_x = clamp_axis(
-		((s32)read_le16(&report[4]) - 0x8000) >> 8);
-	state->input.left_y = clamp_axis(
-		-(((s32)read_le16(&report[6]) - 0x8000) >> 8));
-	state->input.right_x = clamp_axis(
-		((s32)read_le16(&report[8]) - 0x8000) >> 8);
-	state->input.right_y = clamp_axis(
-		-(((s32)read_le16(&report[10]) - 0x8000) >> 8));
-
-	if(primary & 0x02) buttons |= SWITCH_PRO_BTN_A;
-	if(primary & 0x01) buttons |= SWITCH_PRO_BTN_B;
-	if(primary & 0x08) buttons |= SWITCH_PRO_BTN_X;
-	if(primary & 0x04) buttons |= SWITCH_PRO_BTN_Y;
-	if(primary & 0x10) buttons |= SWITCH_PRO_BTN_L;
-	if(primary & 0x20) buttons |= SWITCH_PRO_BTN_R;
-	if(primary & 0x40) buttons |= SWITCH_PRO_BTN_ZL;
-	if(primary & 0x80) buttons |= SWITCH_PRO_BTN_ZR;
-	if(shared & 0x02) buttons |= SWITCH_PRO_BTN_PLUS;
-	if(shared & 0x01) buttons |= SWITCH_PRO_BTN_MINUS;
-	if(shared & 0x10) buttons |= SWITCH_PRO_BTN_HOME;
-	add_dpad(report[3] & 0x0f, &buttons);
-	state->input.buttons = buttons;
-	state->input_valid = 1;
-	return 1;
 }

@@ -58,7 +58,6 @@ struct SwitchProIncomingState {
 	u8 control_open;
 	u8 interrupt_open;
 	u8 transport_ready;
-	u8 connected;
 	u8 finalized;
 	u8 init_started;
 	u8 init_complete;
@@ -66,10 +65,8 @@ struct SwitchProIncomingState {
 	u8 init_index;
 	u8 init_retries;
 	u8 awaiting_ack;
-	u8 pending_subcommand;
 	u8 report_counter;
 	u8 identity_confirmed;
-	u8 drop_first_basic_report;
 	u8 input_valid;
 	u8 desired_led_mask;
 	u8 sent_led_mask;
@@ -77,13 +74,6 @@ struct SwitchProIncomingState {
 	u8 led_awaiting_ack;
 	u8 led_retries;
 	u8 led_failed;
-	u16 basic_reports;
-	u16 command_reports;
-	u16 full_reports;
-	u16 init_sent;
-	u16 init_acks;
-	u16 led_sent;
-	u16 led_acks;
 	struct SwitchProIncomingInput input;
 };
 
@@ -115,7 +105,4 @@ u16 SwitchProIncomingBuildLedUpdate(struct SwitchProIncomingState *state,
 	u8 *report, u16 capacity, u8 retry);
 s32 SwitchProIncomingHandleReport(struct SwitchProIncomingState *state,
 	const u8 *report, u16 len);
-s32 SwitchProIncomingParseBasic(struct SwitchProIncomingState *state,
-	const u8 *report, u16 len);
-
 #endif

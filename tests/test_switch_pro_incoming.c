@@ -158,7 +158,6 @@ static void test_transport_both_channel_orders(void)
 			SwitchProIncomingChannels(&state, 1, 1);
 		}
 		assert(SwitchProIncomingReady(&state));
-		assert(state.connected);
 		/* Channel callbacks alone are not proof that BTE/L2CAP is ready
 		 * to transmit.  Finalization must wait for the later pump. */
 		assert(!SwitchProIncomingNeedsFinalize(&state));
@@ -229,65 +228,6 @@ static void test_encryption_failure_blocks_hid(void)
 	assert(!SwitchProIncomingReady(&state));
 }
 
-static void test_basic_report_end_to_end(void)
-{
-	struct SwitchProIncomingState state;
-	u8 report[12] = {
-		0x3f, 0x02 | 0x10 | 0x40, 0x01, 0x01,
-		0x00, 0x80, 0x00, 0x80, 0xff, 0xff, 0x00, 0x00
-	};
-
-	SwitchProIncomingReset(&state);
-	SwitchProIncomingImported(&state);
-	SwitchProIncomingListener(&state, 0);
-	SwitchProIncomingACL(&state, 0);
-	SwitchProIncomingEncryption(&state, 0, 1);
-	SwitchProIncomingChannels(&state, 1, 1);
-	assert(SwitchProIncomingReady(&state));
-	assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)) == 0);
-	assert(!state.input_valid);
-	assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)) == 1);
-	assert(state.basic_reports == 2);
-	assert(state.input_valid);
-	assert(state.input.left_x == 0 && state.input.left_y == 0);
-	assert(state.input.right_x == 127 && state.input.right_y == 127);
-	assert(state.input.buttons & SWITCH_PRO_BTN_A);
-	assert(state.input.buttons & SWITCH_PRO_BTN_L);
-	assert(state.input.buttons & SWITCH_PRO_BTN_ZL);
-	assert(state.input.buttons & SWITCH_PRO_BTN_MINUS);
-	assert(state.input.buttons & SWITCH_PRO_BTN_UP);
-	assert(state.input.buttons & SWITCH_PRO_BTN_RIGHT);
-}
-
-static void test_basic_dpad(void)
-{
-	static const u32 expected[] = {
-		SWITCH_PRO_BTN_UP,
-		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_RIGHT,
-		SWITCH_PRO_BTN_RIGHT,
-		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_RIGHT,
-		SWITCH_PRO_BTN_DOWN,
-		SWITCH_PRO_BTN_DOWN | SWITCH_PRO_BTN_LEFT,
-		SWITCH_PRO_BTN_LEFT,
-		SWITCH_PRO_BTN_UP | SWITCH_PRO_BTN_LEFT,
-		0
-	};
-	struct SwitchProIncomingState state;
-	u8 report[12];
-	u32 i;
-	for(i = 0; i < sizeof(expected) / sizeof(expected[0]); i++)
-	{
-		memset(report, 0, sizeof(report));
-		report[0] = 0x3f;
-		report[3] = i;
-		report[5] = report[7] = report[9] = report[11] = 0x80;
-		SwitchProIncomingReset(&state);
-		assert(!SwitchProIncomingParseBasic(&state, report, sizeof(report)));
-		assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)));
-		assert(state.input.buttons == expected[i]);
-	}
-}
-
 static void test_full_left_y_gamecube_direction(void)
 {
 	struct SwitchProIncomingState state;
@@ -308,43 +248,6 @@ static void test_full_left_y_gamecube_direction(void)
 	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
 		SWITCH_PRO_EVENT_INPUT);
 	assert(state.input.left_y == -128);
-}
-
-static void test_basic_button_bits(void)
-{
-	struct ButtonCase {
-		u8 offset;
-		u8 bit;
-		u32 expected;
-	};
-	static const struct ButtonCase cases[] = {
-		{1, 0x02, SWITCH_PRO_BTN_A},
-		{1, 0x01, SWITCH_PRO_BTN_B},
-		{1, 0x08, SWITCH_PRO_BTN_X},
-		{1, 0x04, SWITCH_PRO_BTN_Y},
-		{1, 0x10, SWITCH_PRO_BTN_L},
-		{1, 0x20, SWITCH_PRO_BTN_R},
-		{1, 0x40, SWITCH_PRO_BTN_ZL},
-		{1, 0x80, SWITCH_PRO_BTN_ZR},
-		{2, 0x02, SWITCH_PRO_BTN_PLUS},
-		{2, 0x01, SWITCH_PRO_BTN_MINUS},
-		{2, 0x10, SWITCH_PRO_BTN_HOME}
-	};
-	struct SwitchProIncomingState state;
-	u8 report[12];
-	u32 i;
-	for(i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
-	{
-		memset(report, 0, sizeof(report));
-		report[0] = 0x3f;
-		report[3] = 8;
-		report[5] = report[7] = report[9] = report[11] = 0x80;
-		report[cases[i].offset] = cases[i].bit;
-		SwitchProIncomingReset(&state);
-		assert(!SwitchProIncomingParseBasic(&state, report, sizeof(report)));
-		assert(SwitchProIncomingParseBasic(&state, report, sizeof(report)));
-		assert(state.input.buttons == cases[i].expected);
-	}
 }
 
 static void make_ready(struct SwitchProIncomingState *state)
@@ -417,8 +320,6 @@ static void test_exact_linux_init_sequence(void)
 	}
 	assert(state.identity_confirmed);
 	assert(state.init_complete);
-	assert(state.init_sent == SWITCH_PRO_INIT_COMMAND_COUNT);
-	assert(state.init_acks == SWITCH_PRO_INIT_COMMAND_COUNT);
 	assert(!SwitchProIncomingBuildInit(&state, report, sizeof(report), 0));
 }
 
@@ -462,7 +363,6 @@ static void test_player_led_channel_mapping_and_updates(void)
 				sizeof(reply)) == SWITCH_PRO_EVENT_ACK);
 	}
 	assert(state.applied_led_mask == 0x03);
-	assert(state.led_acks == 1);
 	assert(!SwitchProIncomingNeedsLedUpdate(&state));
 
 	SwitchProIncomingSetChannel(&state, 3);
@@ -478,7 +378,6 @@ static void test_player_led_channel_mapping_and_updates(void)
 	assert(SwitchProIncomingHandleReport(&state, reply, sizeof(reply)) ==
 		SWITCH_PRO_EVENT_ACK);
 	assert(state.applied_led_mask == 0x0f);
-	assert(state.led_acks == 2);
 	assert(!SwitchProIncomingNeedsLedUpdate(&state));
 	assert(!SwitchProIncomingBuildLedUpdate(&state, report,
 		sizeof(report), 0));
@@ -546,7 +445,6 @@ static void test_player_led_retry_is_bounded_and_reconnect_resets(void)
 	SwitchProIncomingReset(&state);
 	assert(state.desired_led_mask == 0);
 	assert(state.applied_led_mask == 0);
-	assert(state.led_acks == 0);
 	SwitchProIncomingSetChannel(&state, 0);
 	assert(state.desired_led_mask == 0x01);
 	assert(!state.led_failed);
@@ -641,7 +539,6 @@ static void test_full_report_end_to_end(void)
 	report[11] = 0x00;
 	assert(SwitchProIncomingHandleReport(&state, report, sizeof(report)) ==
 		SWITCH_PRO_EVENT_INPUT);
-	assert(state.full_reports == 1);
 	assert(state.input_valid);
 	assert(state.input.left_x == 0 && state.input.left_y == 0);
 	assert(state.input.right_x == 127 && state.input.right_y == 127);
@@ -664,10 +561,7 @@ int main(void)
 	test_encrypted_reconnect_survives_redundant_auth_failure();
 	test_security_after_channels_also_finalizes();
 	test_encryption_failure_blocks_hid();
-	test_basic_report_end_to_end();
-	test_basic_dpad();
 	test_full_left_y_gamecube_direction();
-	test_basic_button_bits();
 	test_exact_linux_init_sequence();
 	test_player_led_channel_mapping_and_updates();
 	test_init_led_waits_for_channel_then_resumes();
