@@ -1,3 +1,28 @@
+## This fork: Switch Pro Controllers through Bloopair
+
+This fork lets original **Nintendo Switch 1 Pro Controllers** reconnect
+wirelessly in Nintendont GameCube games on a Wii U.
+
+**Requirements:** a Wii U running **Aroma**, an SD card, original Switch 1 Pro
+Controllers, and **both matching fork release packages**:
+
+- **[Download Nintendont with Switch Pro support](https://github.com/GerwinVerkerk/Nintendont/releases/download/switch-pro-bloopair-v0.1.0-rc1/Nintendont-Switch-Pro-Bloopair-v0.1.0-rc1.zip)**
+- **[Download matching Bloopair + sync plugin + Koopair](https://github.com/GerwinVerkerk/Bloopair/releases/download/switch-pro-nintendont-v0.1.0-rc1/Bloopair-Switch-Pro-Nintendont-v0.1.0-rc1.zip)**
+
+Back up the files already on the SD card, extract **both ZIPs to the SD root**,
+and fully restart the Wii U. Pair each controller normally in the Wii U menu.
+Start a GameCube game through Nintendont, then press **A** on each Switch Pro to
+reconnect. No Manual export or extra controller configuration is required.
+
+See the [full installation guide and implementation source](https://github.com/GerwinVerkerk/Nintendont/tree/feature/switch-pro-incoming-minimal#switch-pro-on-wii-u)
+on the [`feature/switch-pro-incoming-minimal`](https://github.com/GerwinVerkerk/Nintendont/tree/feature/switch-pro-incoming-minimal)
+branch. This is a fork-specific integration; the upstream/repository download
+instructions below do not provide the complete tested feature.
+
+---
+
+## Upstream project documentation
+
 ### Nintendont
 A Wii Homebrew Project to play GC Games on Wii and vWii on Wii U
 
